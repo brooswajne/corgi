@@ -1,0 +1,75 @@
+env:
+  es6: true
+  node: true
+parserOptions:
+  ecmaVersion: 2019
+extends:
+  - "eslint:recommended"
+rules:
+  indent:
+    - error
+    - 4
+  linebreak-style:
+    - error
+    - unix
+  quotes:
+    - error
+    - single
+  semi:
+    - error
+    - always
+  no-console:
+    - error
+  no-unused-vars:
+    - error
+    - args: none
+      ignoreRestSiblings: true
+  eol-last:
+    - error
+    - always
+  dot-location:
+    - error
+    - property
+  no-useless-return:
+    - error
+  consistent-this:
+    - error
+    - self
+  camelcase:
+    - error
+  comma-dangle:
+    - error
+    - always-multiline
+  brace-style:
+    - error
+    - 1tbs
+    - allowSingleLine: true
+  func-call-spacing:
+    - error
+    - never
+  block-spacing:
+    - error
+    - always
+  no-trailing-spaces:
+    - error
+  space-before-function-paren:
+    - error
+    - never
+  space-before-blocks:
+    - error
+  no-var:
+    - error
+  no-confusing-arrow:
+    - warn
+  no-unneeded-ternary:
+    - warn
+  no-multiple-empty-lines:
+    - warn
+  keyword-spacing:
+    - warn
+  no-extra-parens:
+    - warn
+    - all
+  consistent-return:
+    - warn
+    - treatUndefinedAsUnspecified: true
