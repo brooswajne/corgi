@@ -9,17 +9,10 @@ const RENDERERS = {
     // 'docx': require('./lib/docx'),
 };
 
-/* IDEAS
- *
- * parser function has signature like function(property, { scope, cache }, callback)
- * - can return a promise instead of callback
- * - cache is a Map() object you can use to store things so you don't have to re-fetch/evaluate them
- */
-
 class Templater {
     constructor(parser, {
         tagFinder = /\[\[(.*?[^\\])\]\]/g,
-    }) {
+    } = {}) {
         this.parser = parser;
         this.tagFinder = tagFinder;
     }
@@ -32,9 +25,9 @@ class Templater {
             if (typeof src === 'string') type = path.extname(src).substring(1);
             else throw new Error('Type argument is required when not passing a filepath');
         }
+        if (!(type in RENDERERS)) throw new Error('Filetype not supported');
 
         const zip = await JSZip.loadAsync(source);
-        if (!Object.keys(RENDERERS).includes(type)) throw new Error('Filetype not supported');
         const renderer = new RENDERERS[type](zip, this);
 
         await renderer.render();

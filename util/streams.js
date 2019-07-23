@@ -1,7 +1,7 @@
 const { Transform } = require('stream');
 const async = require('./async');
 
-function partialMatcher(re) {
+function partialMatcher(re) { // TODO rewrite
     const source = re.source;
     let i = 0;
 

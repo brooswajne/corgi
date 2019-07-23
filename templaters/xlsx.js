@@ -11,7 +11,7 @@ const {
     setXMLTagAttributes,
 } = require('../util/xml');
 const { XLSXRenderError: RenderError } = require('../errors');
-const async = require('../util/async');
+const { replace } = require('../util/async');
 
 function expandCols(blocks) {
     // console.log(blocks);
@@ -55,7 +55,7 @@ function expandRows(blocks) {
         return newRows.join('');
     }, { contentsOnly: false });
 }
-class XLSXTemplatr {
+class XLSXTemplater {
     constructor(zip, templatr) {
         Object.defineProperties(this, {
             sharedStrings: {
@@ -126,7 +126,7 @@ class XLSXTemplatr {
                 const sharedStringID = counter++;
                 const blocksOpened = [];
                 const blocksClosed = [];
-                await async.replace(sharedString, this.tagFinder, async(match, tag) => {
+                await replace(sharedString, this.tagFinder, async(match, tag) => {
                     const parsed = await this.parse(tag);
 
                     if (parsed.type.startsWith('block:')) {
@@ -251,4 +251,4 @@ class XLSXTemplatr {
     }
 }
 
-module.exports = XLSXTemplatr;
+module.exports = XLSXTemplater;

@@ -36,9 +36,7 @@ async function parser(property, /* { scope, cache } */) {
     return corgi.data(obj);
 }
 
-const templater = new Templater(parser, {
-    log: 4,
-});
+const templater = new Templater(parser);
 
 // const { readFile } = require('./lib/common/files');
 async function test() {
