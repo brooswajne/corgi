@@ -1,13 +1,3 @@
-function getWorksheetName(filepath) {
-    if (!filepath.startsWith('xl/worksheets/')) return null;
-
-    if (filepath.startsWith('xl/worksheets/_rels')) {
-        return filepath.substring('xl/worksheets/_rels/'.length,
-            filepath.length - '.rels'.length);
-    } else {
-        return filepath.substring('xl/worksheets/'.length);
-    }
-}
 function parseCellReference(reference) {
     return {
         row: parseInt(reference.match(/\d+/g)[0]),
@@ -17,6 +7,7 @@ function parseCellReference(reference) {
 function getCellContents(cell) {
     return cell.match('<v>(.*)</v>')[1];
 }
+
 function columnToNumber(col) {
     if (typeof col !== 'string' || !col.length) return -1;
     const chars = col.split('');
@@ -33,8 +24,12 @@ function numberToColumn(num) {
     }
     return column;
 }
+
+// TODO generator versions of these for more efficient iterating
 function columnRange(start, end) {
-    let [first, last] = [start,end].map(columnToNumber).sort((a, b) => a - b);
+    let [ first, last ] = [ start, end ]
+        .sort(columnOrdering)
+        .map(columnToNumber);
 
     let current = first;
     const cols = [];
@@ -44,11 +39,72 @@ function columnRange(start, end) {
     }
     return cols;
 }
+function cellRange(start, end) {
+    let [ first, last ] = [ start, end ]
+        .sort(cellOrdering)
+        .map(parseCellReference);
+
+    const cells = [];
+    for (let col of columnRange(first.col, last.col)) {
+        for (let row = first.row; row <= last.row; row++) {
+            cells.push(`${col}${row}`);
+        }
+    }
+    return cells;
+}
+
+function columnOrdering(col1, col2) {
+    if (col1.length != col2.length) return col1.length - col2.length;
+    if (col1.toLowerCase() < col2.toLowerCase()) return -1;
+    if (col1.toLowerCase() > col2.toLowerCase()) return 1;
+    return 0;
+}
+function cellOrdering(cell1, cell2) {
+    const { row: row1, col: col1 } = parseCellReference(cell1);
+    const { row: row2, col: col2 } = parseCellReference(cell2);
+
+    const colOrder = columnOrdering(col1, col2);
+    if (colOrder) return colOrder;
+    return row1 - row2;
+}
+
+function getWorksheetName(filepath) {
+    if (!filepath.startsWith('xl/worksheets/')) return null;
+
+    if (filepath.startsWith('xl/worksheets/_rels')) {
+        return filepath.substring('xl/worksheets/_rels/'.length,
+            filepath.length - '.rels'.length);
+    } else {
+        return filepath.substring('xl/worksheets/'.length);
+    }
+}
+const MAX_CELL_CHARACTERS = 32767; //https://support.office.com/en-ie/article/excel-specifications-and-limits-1672b34d-7043-467e-8e27-269d656771c3
+const BROKEN_ESCAPE_CODE = /(&[^;]*)$/g;
+function truncateContents(contents) {
+    if (contents.toString().length > MAX_CELL_CHARACTERS) {
+        let substr = contents
+            .substring(0, MAX_CELL_CHARACTERS - 4)
+            .replace(BROKEN_ESCAPE_CODE, '');
+        return substr + '...';
+    } else {
+        return contents;
+    }
+}
+
 module.exports = {
-    getWorksheetName,
+    // cell helpers
     parseCellReference,
     getCellContents,
+    // column helpers
     columnToNumber,
     numberToColumn,
+    // range helpers
     columnRange,
+    cellRange,
+    // comparators
+    columnOrdering,
+    cellOrdering,
+    // misc
+    getWorksheetName,
+    truncateContents,
 };
