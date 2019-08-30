@@ -33,6 +33,7 @@ module.exports = {
         "space-before-function-paren": ["error", "never"],
         "space-before-blocks": "error",
         "no-var": "error",
+        "prefer-const": "error",
         "consistent-return": ["error", {
             "treatUndefinedAsUnspecified": true,
         }],
@@ -41,5 +42,9 @@ module.exports = {
         "no-multiple-empty-lines": "warn",
         "keyword-spacing": "warn",
         "no-extra-parens": ["warn", "all"],
-    }
+    },
+    "overrides": [{
+        "files": ["*.test.js"],
+        "env": { "mocha": true },
+    }],
 };

@@ -14,9 +14,9 @@ module.exports = function({ replace }) {
             const callbacks = [
                 (match, group) => group.toUpperCase(),
             ];
-            for (let string of strings) {
-                for (let search of searches) {
-                    for (let callback of callbacks) {
+            for (const string of strings) {
+                for (const search of searches) {
+                    for (const callback of callbacks) {
                         const asyncCallback = function(...args) {
                             return new Promise((resolve) => {
                                 setTimeout(() => resolve(callback(...args)), 1);

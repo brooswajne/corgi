@@ -18,7 +18,7 @@ function columnToNumber(col) {
 function numberToColumn(num) {
     let column = '';
     while (num > 0) {
-        let rem = (num - 1) % 26;
+        const rem = (num - 1) % 26;
         num = Math.floor((num - 1) / 26);
         column = String.fromCharCode(65 + rem) + column;
     }
@@ -27,7 +27,7 @@ function numberToColumn(num) {
 
 // TODO generator versions of these for more efficient iterating
 function columnRange(start, end) {
-    let [ first, last ] = [ start, end ]
+    const [ first, last ] = [ start, end ]
         .sort(columnOrdering)
         .map(columnToNumber);
 
@@ -40,12 +40,12 @@ function columnRange(start, end) {
     return cols;
 }
 function cellRange(start, end) {
-    let [ first, last ] = [ start, end ]
+    const [ first, last ] = [ start, end ]
         .sort(cellOrdering)
         .map(parseCellReference);
 
     const cells = [];
-    for (let col of columnRange(first.col, last.col)) {
+    for (const col of columnRange(first.col, last.col)) {
         for (let row = first.row; row <= last.row; row++) {
             cells.push(`${col}${row}`);
         }
@@ -82,7 +82,7 @@ const MAX_CELL_CHARACTERS = 32767; //https://support.office.com/en-ie/article/ex
 const BROKEN_ESCAPE_CODE = /(&[^;]*)$/g;
 function truncateContents(contents) {
     if (contents.toString().length > MAX_CELL_CHARACTERS) {
-        let substr = contents
+        const substr = contents
             .substring(0, MAX_CELL_CHARACTERS - 4)
             .replace(BROKEN_ESCAPE_CODE, '');
         return substr + '...';

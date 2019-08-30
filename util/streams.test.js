@@ -1,4 +1,4 @@
-const { testTransformStreams, ChunkSplitter } = require('../../util/streams');
+const { testTransformStreams, ChunkSplitter } = require('../test/util/streams');
 
 module.exports = function({ XMLTagReplacer }) {
     describe('XMLTagReplacer', function() {

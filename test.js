@@ -1,50 +1,29 @@
-const corgi = require('./index');
-const { Templater, RenderError } = corgi;
+const fs = require('fs');
+const path = require('path');
+const ignore = require('ignore')();
 
-const async = require('./util/async');
+const IGNORED_FILES = fs.readFileSync(path.join(__dirname, '.gitignore'), { encoding: 'utf-8' })
+    .split('\n');
+ignore.add(IGNORED_FILES);
+ignore.add(['.git']);
 
-const json = {
-    documents: [
-        {
-            name: 'document one.docx',
-        },
-        {
-            name: 'document two.docx',
-        },
-        {
-            name: 'document three.docx',
-        },
-    ],
-};
-async function parser(property, /* { scope, cache } */) {
-    const time = Math.round(Math.random() * 1000);
-    // console.time(`parsing, waiting ${time}`);
-    await async.wait(time);
-    // console.timeEnd(`parsing, waiting ${time}`);
+(function testDir(dir) {
+    fs.readdirSync(dir).forEach(file => {
+        const filePath = path.join(dir, file);
+        const relativePath = path.relative(__dirname, filePath);
 
-    if (property.trim()[0] === '/') return corgi.block.close(property.trim().substring(1));
+        if (ignore.ignores(relativePath)) return;
 
-    const path = property.split(' ')
-        .map(s => s.trim())
-        .filter(s => s);
-
-    const obj = path.reduce((prev, p) => {
-        if (typeof prev === 'undefined') return prev;
-        return prev[p];
-    }, json);
-    if (obj instanceof Array) return corgi.block.open(property.trim(), obj);
-    return corgi.data(obj);
-}
-
-const templater = new Templater(parser);
-
-// const { readFile } = require('./lib/common/files');
-async function test() {
-    await templater.render('./test/files/Templatr Test Sheet.xlsx');
-    // await templater.render(await readFile('./test/xlsx/Templatr Test Sheet.xlsx'), 'xlsx');
-}
-
-test().catch(err => {
-    if (err instanceof RenderError) console.error(err.toString());
-    else console.error(err);
-});
+        if (fs.statSync(filePath).isDirectory()) {
+            testDir(filePath);
+        } else if (file.endsWith('.test.js')) {
+            // const testTarget = path.join(__dirname, '../'+testName);
+            const testTarget = filePath.replace(/\.test\.js$/, '.js');
+            const testName = path.relative(__dirname, testTarget);
+            console.log({ filePath, testName, testTarget });
+            describe(testName, function() {
+                require(filePath)(require(testTarget));
+            });
+        }
+    });
+})(__dirname);
