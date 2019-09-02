@@ -1,7 +1,7 @@
 const path = require('path');
 const JSZip = require('jszip');
 
-const { readFile } = require('./util/files');
+const { readFile } = require('./util/common');
 const Errors = require('./errors');
 
 const RENDERERS = {
