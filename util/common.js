@@ -1,6 +1,12 @@
 const fs = require('fs');
 
 module.exports = {
+    isObject(obj) {
+        return typeof obj === 'object'
+            && obj !== null
+            && obj.constructor === Object;
+    },
+    numericalOrdering: (a, b) => a - b,
     readFile(...args) {
         return new Promise((resolve, reject) => {
             fs.readFile(...args, (err, data) => {
