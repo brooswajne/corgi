@@ -1,3 +1,5 @@
+const { numericalOrdering } = require('./common');
+
 function parseCellReference(reference) {
     return {
         row: parseInt(reference.match(/\d+/g)[0]),
@@ -25,33 +27,28 @@ function numberToColumn(num) {
     return column;
 }
 
-// TODO generator versions of these for more efficient iterating
-function columnRange(start, end) {
+function* iterateRows(start, end) {
+    for (let current = start; current <= end; current++) yield current;
+}
+const rowRange = (start, end) => Array.from(iterateRows(start, end));
+function* iterateColumns(start, end) {
     const [ first, last ] = [ start, end ]
         .sort(columnOrdering)
         .map(columnToNumber);
 
-    let current = first;
-    const cols = [];
-    while (current <= last) {
-        cols.push(numberToColumn(current));
-        current += 1;
-    }
-    return cols;
+    for (let current = first; current <= last; current++) yield numberToColumn(current);
 }
-function cellRange(start, end) {
+const columnRange = (start, end) => Array.from(iterateColumns(start, end));
+function* iterateCells(start, end) {
     const [ first, last ] = [ start, end ]
         .sort(cellOrdering)
         .map(parseCellReference);
 
-    const cells = [];
-    for (const col of columnRange(first.col, last.col)) {
-        for (let row = first.row; row <= last.row; row++) {
-            cells.push(`${col}${row}`);
-        }
+    for (const col of iterateColumns(first.col, last.col)) {
+        for (const row of iterateRows(first.row, last.row)) yield `${col}${row}`;
     }
-    return cells;
 }
+const cellRange = (start, end) => Array.from(iterateCells(start, end));
 
 function columnOrdering(col1, col2) {
     if (col1.length != col2.length) return col1.length - col2.length;
@@ -99,9 +96,14 @@ module.exports = {
     columnToNumber,
     numberToColumn,
     // range helpers
+    iterateRows,
+    iterateColumns,
+    iterateCells,
+    rowRange,
     columnRange,
     cellRange,
     // comparators
+    rowOrdering: numericalOrdering,
     columnOrdering,
     cellOrdering,
     // misc
