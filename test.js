@@ -44,23 +44,47 @@ const corgi = require('./corgi');
 const Excel = require('./test/excel');
 const { writeFile } = require('./lib/common');
 
-const compareBuffers = (testName, expected, actual) => {
-    expect(expected, 'test expectation is not a buffer').to.be.instanceof(Buffer);
-    expect(actual, 'test result is not a buffer').to.be.instanceof(Buffer);
-    const isEqual = expected.equals(actual);
-    if (!isEqual) {
-        /* eslint-disable no-console */
-        writeFile(`./test/files/${testName}-expected.xlsx`, expected)
-            .catch((err) => console.error('Failed to write to', `./test/files/${testName}-expected.xlsx`));
-        writeFile(`./test/files/${testName}-actual.xlsx`, actual)
-            .catch((err) => console.error('Failed to write to', `./test/files/${testName}-actual.xlsx`));
-        /* eslint-enable no-console */
-    }
-    expect(isEqual, `file does not match expectation: ${testName}`).to.be.true;
+const FILE_OUTPUT_DIR = path.join(__dirname, './test/files/');
+const testTemplater = (format) => {
+    const rootDirectory = path.join(FILE_OUTPUT_DIR, format);
+    if (!fs.existsSync(rootDirectory)) fs.mkdirSync(rootDirectory);
+
+    return function test(title, templater, input, expectedOutput) {
+        const shortTitle = title.toLowerCase()
+            .substring('should '.length)
+            .replace(/\s+/g, '-')
+            .substring(0, 16);
+
+
+        it(title, async function() {
+            [ input, expectedOutput ] = await Promise.all([ input, expectedOutput ]); // if promises passed
+            expect(input, 'templater test input is not a buffer').to.be.instanceof(Buffer);
+            expect(expectedOutput, 'templater test expected output is not a buffer').to.be.instanceof(Buffer);
+
+            const output = await templater.render(input, format);
+            expect(output, 'templater output is not a buffer').to.be.instanceof(Buffer);
+
+            const isEqual = output.equals(input);
+            if (!isEqual) {
+                const directory = path.join(rootDirectory, shortTitle);
+                if (!fs.existsSync(directory)) fs.mkdirSync(directory);
+
+                /* eslint-disable no-console */
+                writeFile(`${directory}/expected.xlsx`, expectedOutput)
+                    .catch((err) => console.error('Failed to write to', `${directory}/expected.xlsx`, err));
+                writeFile(`${directory}/output.xlsx`, output)
+                    .catch((err) => console.error('Failed to write to', `${directory}/output.xlsx`, err));
+                /* eslint-enable no-console */
+
+                throw new Error(`Output does not match expected, writing to directory: ${directory}`);
+            }
+        });
+    };
 };
 
-describe('renderer', function() {
+describe('xlsx templater', function() {
     const { Templater } = corgi;
+    const test = testTemplater('xlsx');
 
     it('should accept both filepaths and file streams', async function() {
         const templater = new Templater(() => '');
@@ -72,14 +96,67 @@ describe('renderer', function() {
         expect(async() => await templater.render('./test/empty.xlsx')).to
             .not.throw();
     });
-    it('should leave non-templated spreadsheets unchanged', async function() {
-        const templater = new Templater(() => '');
-
-        const basic = await Excel([
+    test('should leave non-templated spreadsheets unchanged',
+        new Templater(() => ''),
+        Excel([
             ['foo', 'bar', 'fizz'],
             ['bloop', 'blap', 'blip'],
-        ]);
-        const rendered = await templater.render(basic, 'xlsx');
-        compareBuffers('unchanged', basic, rendered);
-    });
+        ]),
+        Excel([
+            ['foo', 'bar', 'fizz'],
+            ['bloop', 'blap', 'blip'],
+        ]),
+    );
+    test('should expand row blocks', // TODO: break up into multiple tests
+        new Templater((tag) => ({
+            'open0': corgi.block.open('0', []),
+            'close0': corgi.block.close('0'),
+            'open2': corgi.block.open('2', [ 1, 2 ]),
+            'close2': corgi.block.close('2'),
+            'open3': corgi.block.open('3', [ 1, 2, 3 ]),
+            'close3': corgi.block.close('3'),
+        }[tag])),
+        Excel([
+            [ '[[ open3 ]]',  'im expanded', '[[ close3 ]]', 'im not' ],
+            [ 'neither',     'are',         'we' ],
+            [ '[[ open0 ]]', 'we',          'are',         'gone',  '[[ close0 ]]' ],
+            [ 'but',         '[[ open2 ]]',  'we',          'are',   '[[ close2 ]]' ],
+        ], [
+            [ '[[ open3 ]]', 'expand me', '[[ close3 ]]', 'not me', '[[ open2 ]]', 'me though', '[[ close2 ]]' ],
+        ]),
+        Excel([
+            [ '[[ open3 ]]', 'im expanded', '[[ close3 ]]', 'im not' ],
+            [ '[[ open3 ]]', 'im expanded', '[[ close3 ]]' ],
+            [ '[[ open3 ]]', 'im expanded', '[[ close3 ]]' ],
+            [ 'neither',    'are',         'we' ],
+            [ 'but',        '[[ open2 ]]',  'we',          'are',   '[[ close2 ]]' ],
+            [ null,         '[[ open2 ]]',  'we',          'are',   '[[ close2 ]]' ],
+        ], [
+            [ '[[ open3 ]]', 'expand me', '[[ close3 ]]', 'not me', '[[ open2 ]]', 'me though', '[[ close2 ]]' ],
+            [ '[[ open3 ]]', 'expand me', '[[ close3 ]]', null,     '[[ open2 ]]', 'me though', '[[ close2 ]]' ],
+            [ '[[ open3 ]]', 'expand me', '[[ close3 ]]', null,     null,          null,        null ],
+        ]),
+    );
+    test('should expand column blocks',
+        new Templater((tag) => ({
+            'open0': corgi.block.open('0', []),
+            'close0': corgi.block.close('0'),
+            'open2': corgi.block.open('2', [ 1, 2 ]),
+            'close2': corgi.block.close('2'),
+            'open3': corgi.block.open('3', [ 1, 2, 3 ]),
+            'close3': corgi.block.close('3'),
+        }[tag])),
+        Excel([
+            [ '[[ open3 ]]',  'im',       'hi' ],
+            [ 'expandme',     'not',      '[[ open0 ]]', 'wow' ],
+            [ 'andme',        'expanded', 'bye' ],
+            [ '[[ close3 ]]', 'hah',      '[[ close0 ]]', 'wee' ],
+        ]),
+        Excel([
+            [ '[[ open3 ]]',  '[[ open3 ]]',  '[[ open3 ]]',  'im',       'hi' ],
+            [ 'expandme',     'expandme',     'expandme',     'not',      'wow' ],
+            [ 'andme',        'andme',        'andme',        'expanded' ],
+            [ '[[ close3 ]]', '[[ close3 ]]', '[[ close3 ]]', 'hah',      'wee' ],
+        ])
+    );
 });
