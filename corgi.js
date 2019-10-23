@@ -28,9 +28,13 @@ class Templater {
         if (!(type in RENDERERS)) throw new Error('Filetype not supported');
 
         const zip = await JSZip.loadAsync(source);
-        const renderer = new RENDERERS[type](zip, this);
+        const renderer = new RENDERERS[type](zip, {
+            parser: this.parser,
+            tagFinder: this.tagFinder,
+        });
 
         await renderer.render();
+        return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
     }
 }
 
