@@ -3,15 +3,15 @@ const {
     parseCellReference,
     getCellContents,
     columnRange,
-} = require('../util/excel');
-const { XMLTagReplacer } = require('../util/streams');
+} = require('../lib/excel');
+const { XMLTagReplacer } = require('../lib/streams');
 const {
     parseXMLTag,
     getXMLTagRegex,
     setXMLTagAttributes,
-} = require('../util/xml');
+} = require('../lib/xml');
 const { XLSXRenderError: RenderError } = require('../errors');
-const { replace } = require('../util/async');
+const { replace } = require('../lib/async');
 
 function expandCols(blocks) {
     // console.log(blocks);

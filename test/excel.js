@@ -1,6 +1,6 @@
 const JSZip = require('jszip');
 
-const { isObject } = require('../../util/common');
+const { isObject } = require('../lib/common');
 const {
     cellOrdering,
     columnOrdering,
@@ -11,7 +11,7 @@ const {
     numberToColumn,
     parseCellReference,
     rowOrdering,
-} = require('../../util/excel');
+} = require('../lib/excel');
 
 module.exports = function constructWorkbook(...worksheetSpecs) {
     const workbook = new JSZip();
