@@ -25,6 +25,7 @@ module.exports = function constructWorkbook(...worksheetSpecs) {
         if (Array.isArray(worksheetData)) {
             worksheetData = worksheetData.reduce((dataObject, row, rowIdx) => {
                 return row.reduce((dataObject, cell, columnIdx) => {
+                    if (cell === null) return dataObject; // empty cell
                     const cellRef = `${numberToColumn(columnIdx + 1)}${rowIdx + 1}`;
                     dataObject[cellRef] = cell;
                     return dataObject;
