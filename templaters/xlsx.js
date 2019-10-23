@@ -1,8 +1,15 @@
 const {
-    getWorksheetName,
-    parseCellReference,
-    getCellContents,
+    constructArray,
+    unique,
+} = require('../lib/common');
+const {
+    columnOrdering,
     columnRange,
+    columnToNumber,
+    getCellContents,
+    getWorksheetName,
+    numberToColumn,
+    parseCellReference,
 } = require('../lib/excel');
 const { XMLTagReplacer } = require('../lib/streams');
 const {
@@ -10,53 +17,85 @@ const {
     getXMLTagRegex,
     setXMLTagAttributes,
 } = require('../lib/xml');
-const { XLSXRenderError: RenderError } = require('../errors');
+const { XLSXRenderError: RenderError } = require('../errors'); // TODO: all error messages standardised in errors.js, eg. XLSX.Unclosed(block, cell), GENERIC.Mismatch()
 const { replace } = require('../lib/async');
 
-function expandCols(blocks) {
-    // console.log(blocks);
-    return XMLTagReplacer('c', (cell, { attributes }) => {
-        const { row, col } = parseCellReference(attributes['r']);
-        const colBlocks = blocks.filter(block => block.col === col);
-        const colBlocksInRow = colBlocks.filter(block => block.row[0] <= row && block.row[1] <= row);
-        // console.log(attributes['r'], colBlocksInRow);
-        // console.log(cell);
-        return cell;
+const expandRows = (blocks, {
+    rowsAdded = 0,
+} = {}) => XMLTagReplacer('row', (row, { attributes }) => {
+    let rowNumber = parseInt(attributes['r']);
+    const rowBlocks = blocks.filter(block => block.row === rowNumber);
+
+    if (rowsAdded !== 0) { // row has been moved down/up by some other rows being expanded
+        rowNumber += rowsAdded;
+        row = setXMLTagAttributes(row.replace(getXMLTagRegex('c'), (cell) => {
+            const { attributes } = parseXMLTag(cell);
+            const { col } = parseCellReference(attributes['r']);
+            return setXMLTagAttributes(cell, { 'r': col + rowNumber });
+        }), { 'r': rowNumber });
+    }
+
+    if (!rowBlocks.length) return row;
+
+    const blocksData = rowBlocks.map(block => block.data);
+    const rowsToCreate = Math.max(...blocksData.map(d => d.length));
+    const newRows = constructArray(rowsToCreate, (idx) => {
+        if (idx === 0) return row;
+
+        const blockColumns = rowBlocks
+            .filter((block, num) => idx < blocksData[num].length)
+            .map(block => columnRange(...block.col));
+        const columnsToCopy = blockColumns
+            .reduce((arr, cols) => [...arr, ...cols], []) // flatten
+            .filter(unique())
+            .sort(columnOrdering);
+
+        const newRow = rowNumber + idx;
+        return setXMLTagAttributes(row.replace(getXMLTagRegex('c'), (cell) => {
+            const { attributes } = parseXMLTag(cell);
+            const { col } = parseCellReference(attributes['r']);
+            return columnsToCopy.includes(col) ? setXMLTagAttributes(cell, {
+                'r': col + newRow,
+            }) : '';
+        }), {
+            'r': newRow,
+            'spans': columnToNumber(columnsToCopy[0]) + ':' + columnToNumber(columnsToCopy[1]),
+        });
     });
-}
-function expandRows(blocks) {
-    return XMLTagReplacer('row', (row, { attributes }) => {
-        const rowNumber = parseInt(attributes['r']);
-        const rowBlocks = blocks.filter(block => block.row === rowNumber);
-        if (!rowBlocks.length) return row;
+    rowsAdded += rowsToCreate - 1;
+    return newRows.join('');
+}, { contentsOnly: false });
+const expandCols = (blocks) => XMLTagReplacer('row', (row, { attributes }) => {
+    const rowNumber = parseInt(attributes['r']);
+    const rowBlocks = blocks.filter(block => block.row[0] <= rowNumber && rowNumber <= block.row[1]);
 
-        // console.log(row, rowBlocks);
-        const blocksData = rowBlocks.map(block => block.data);
-        const rowsToCreate = Math.max(...blocksData.map(d => d.length));
-        const newRows = (new Array(rowsToCreate)).fill(row)
-            .map((row, idx) => {
-                const blockColumns = rowBlocks
-                    .filter((block, num) => idx < blocksData[num].length)
-                    .map(block => columnRange(...block.col));
-                const columnsToCopy = blockColumns
-                    .reduce((arr, cols) => [...arr, ...cols])
-                    .filter((col, idx, cols) => cols.indexOf(col) === idx);
+    let colsAdded = 0;
+    return row.replace(getXMLTagRegex('c'), (cell) => {
+        const { attributes } = parseXMLTag(cell);
+        let { col } = parseCellReference(attributes['r']);
+        const colBlocks = rowBlocks.filter(block => block.col === col);
 
-                const newRow = rowNumber + idx;
-                return setXMLTagAttributes(row.replace(getXMLTagRegex('c'), cell => {
-                    const { attributes } = parseXMLTag(cell);
-                    const { col } = parseCellReference(attributes['r']);
-                    return columnsToCopy.includes(col) ? setXMLTagAttributes(cell, {
-                        'r': col + newRow,
-                    }) : '';
-                }), { 'r': newRow });
-            });
-        // console.log(newRows);
-        return newRows.join('');
-    }, { contentsOnly: false });
-}
+        if (colsAdded !== 0) { // cells has been moved left/right by some other cells being expanded
+            col = numberToColumn(columnToNumber(col) + colsAdded);
+            cell = setXMLTagAttributes(cell, { 'r': col + rowNumber });
+        }
+
+        if (!colBlocks.length) return cell;
+
+        const blocksData = colBlocks.map(block => block.data);
+        const colsToCreate = Math.max(...blocksData.map(d => d.length));
+        const newCells = constructArray(colsToCreate, (idx) => {
+            const newCol = numberToColumn(columnToNumber(col) + idx);
+
+            return setXMLTagAttributes(cell, { 'r': newCol + rowNumber });
+        });
+        colsAdded += colsToCreate - 1;
+        return newCells.join('');
+    });
+}, { contentsOnly: false });
+
 class XLSXTemplater {
-    constructor(zip, templatr) {
+    constructor(zip, { parser, tagFinder }) {
         Object.defineProperties(this, {
             sharedStrings: {
                 get() {
@@ -67,17 +106,17 @@ class XLSXTemplater {
                 get() {
                     const worksheets = Object.keys(zip.files).reduce((worksheets, file) => {
                         if (!file.startsWith('xl/worksheets/')) return worksheets;
+                        if (zip.files[file].dir) return worksheets;
 
                         const sheetName = getWorksheetName(file);
                         if (!(sheetName in worksheets)) worksheets[sheetName] = {
                             path: `xl/worksheets/${sheetName}`,
                         };
 
-                        if (file.startsWith('xl/worksheets/_rels/')) {
-                            worksheets[sheetName]['rels'] = zip.files[file].nodeStream();
-                        } else {
-                            worksheets[sheetName]['sheet'] = zip.files[file].nodeStream();
-                        }
+                        const type = file.startsWith('xl/worksheets/_rels/')
+                            ? 'rels' : 'sheet';
+                        worksheets[sheetName][type] = zip.files[file].nodeStream();
+
                         return worksheets;
                     }, {});
                     Object.keys(worksheets).forEach(name => {
@@ -101,10 +140,8 @@ class XLSXTemplater {
         };
 
         const cache = new Map();
-        this.parse = function(property) {
-            return templatr.parser(property, { cache });
-        };
-        this.tagFinder = templatr.tagFinder;
+        this.parse = (property) => parser(property, { cache });
+        this.tagFinder = tagFinder;
     }
 
     async render() {
@@ -116,6 +153,7 @@ class XLSXTemplater {
         await this.expandWorksheets(blocks);
     }
 
+    // traverse sharedStrings.xml to find strings corresponding to blocks which need to be expanded
     findBlocks() {
         return new Promise((resolve, reject) => {
             const openers = {};
@@ -127,10 +165,10 @@ class XLSXTemplater {
                 const blocksOpened = [];
                 const blocksClosed = [];
                 await replace(sharedString, this.tagFinder, async(match, tag) => {
-                    const parsed = await this.parse(tag);
+                    const parsed = await this.parse(tag.trim());
 
                     if (parsed.type.startsWith('block:')) {
-                        if (!parsed.block) reject('Block is required when opening/closing');
+                        if (!parsed.block) reject(new RenderError('Block is required when opening/closing'));
                     } else return;
 
                     if (parsed.type === 'block:open') {
@@ -160,6 +198,7 @@ class XLSXTemplater {
         });
     }
 
+    // traverse a worksheet's cells, matching to those strings which needed to be expanded from findBlocks()
     resolveWorksheetBlocks(sheet, openers, closers) {
         return new Promise((resolve, reject) => {
             const blocks = { row: [], col: [] };
@@ -172,60 +211,57 @@ class XLSXTemplater {
 
                 const { row, col } = parseCellReference(attributes['r']);
                 const sharedString = getCellContents(cell);
-                if (sharedString in openers) {
-                    openers[sharedString].forEach(block => {
-                        openBlocks.push({
-                            row: row,
-                            col: col,
-                            block: block.block,
-                            data: block.data,
-                        });
+                if (sharedString in openers) openers[sharedString].forEach(block => {
+                    openBlocks.push({
+                        row: row,
+                        col: col,
+                        block: block.block,
+                        data: block.data,
                     });
-                }
-                if (sharedString in closers) {
-                    closers[sharedString].forEach(block => {
-                        closedBlocks.push({
-                            row: row,
-                            col: col,
-                            block: block.block,
-                            data: block.data,
-                        });
+                });
+                if (sharedString in closers) closers[sharedString].forEach(block => {
+                    closedBlocks.push({
+                        row: row,
+                        col: col,
+                        block: block.block,
+                        data: block.data,
                     });
-                }
+                });
             })).on('finish', () => {
-                if (openBlocks.length !== closedBlocks.length)
-                    reject(new RenderError('Mismatched numbers of openers and closers'));
+                if (openBlocks.length !== closedBlocks.length) return void reject(new RenderError('Mismatched numbers of openers and closers'));
 
-                openBlocks.forEach(opener => {
+                for (const opener of openBlocks) {
                     const closers = closedBlocks.filter(closer => closer.block === opener.block);
                     const sameRow = closers.filter(closer => closer.row === opener.row);
                     const sameCol = closers.filter(closer => closer.col === opener.col);
 
-                    if (!sameRow.length && !sameCol.length) {
-                        reject(new RenderError(`Unclosed block "${opener.block}"`, { cell: opener.col + opener.row }));
-                    } else if (sameRow.length === 1 && !sameCol.length) {
-                        blocks.row.push({
-                            row: opener.row,
-                            col: [opener.col, sameRow[0].col],
-                            block: opener.block,
-                            data: opener.data,
-                        });
-                    } else if (sameCol.length === 1 && !sameRow.length) {
-                        blocks.col.push({
-                            row: [opener.row, sameCol[0].row],
-                            col: opener.col,
-                            block: opener.block,
-                            data: opener.data,
-                        });
-                    } else {
-                        reject(new RenderError(`Multiple matching closers for block "${opener.block}"`, { cell: opener.col + opener.row }));
-                    }
-                });
+                    if (!sameRow.length && !sameCol.length) return void reject(new RenderError(
+                        `Unclosed block "${opener.block}"`,
+                        { cell: opener.col + opener.row },
+                    ));
+                    else if (sameRow.length === 1 && !sameCol.length) blocks.row.push({
+                        row: opener.row,
+                        col: [opener.col, sameRow[0].col],
+                        block: opener.block,
+                        data: opener.data,
+                    });
+                    else if (sameCol.length === 1 && !sameRow.length) blocks.col.push({
+                        row: [opener.row, sameCol[0].row],
+                        col: opener.col,
+                        block: opener.block,
+                        data: opener.data,
+                    });
+                    else return void reject(new RenderError(
+                        `Multiple matching closers for block "${opener.block}"`,
+                        { cell: opener.col + opener.row },
+                    ));
+                }
 
                 resolve(blocks);
             });
         });
     }
+    // traverse all worksheets, matching cells to those strings which needed to be expanded from findBlocks()
     async resolveBlocks(openers, closers) {
         const worksheets = this.worksheets;
         const blocks = {};
