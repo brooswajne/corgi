@@ -8,10 +8,11 @@ const RENDERERS = {
     'xlsx': require('./templaters/xlsx'),
     // 'docx': require('./lib/docx'),
 };
+const TAG_FINDER_DEFAULT = /\[\[(.*?[^\\])\]\]/g; // finds eg. [[ my tag ]]
 
 class Templater {
     constructor(parser, {
-        tagFinder = /\[\[(.*?[^\\])\]\]/g,
+        tagFinder = TAG_FINDER_DEFAULT,
     } = {}) {
         this.parser = parser;
         this.tagFinder = tagFinder;
