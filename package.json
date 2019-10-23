@@ -1,14 +1,17 @@
 {
-  "name": "xltemplatr",
+  "name": "corgi",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "An asynchronous, stream-based xlsx templating engine",
+  "main": "corgi.js",
   "scripts": {
     "lint": "eslint .",
     "test": "mocha test.js"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "template",
+    "xlsx"
+  ],
+  "author": "Willem Garnier",
   "license": "ISC",
   "dependencies": {
     "jszip": "^3.2.1"
