@@ -41,55 +41,45 @@ ignore.add(['.git']);
 const { expect } = require('chai');
 
 const corgi = require('./corgi');
-const async = require('./lib/async');
 const Excel = require('./test/excel');
 const { writeFile } = require('./lib/common');
 
-const json = {
-    documents: [
-        {
-            name: 'document one.docx',
-        },
-        {
-            name: 'document two.docx',
-        },
-        {
-            name: 'document three.docx',
-        },
-    ],
+const compareBuffers = (testName, expected, actual) => {
+    expect(expected, 'test expectation is not a buffer').to.be.instanceof(Buffer);
+    expect(actual, 'test result is not a buffer').to.be.instanceof(Buffer);
+    const isEqual = expected.equals(actual);
+    if (!isEqual) {
+        /* eslint-disable no-console */
+        writeFile(`./test/files/${testName}-expected.xlsx`, expected)
+            .catch((err) => console.error('Failed to write to', `./test/files/${testName}-expected.xlsx`));
+        writeFile(`./test/files/${testName}-actual.xlsx`, actual)
+            .catch((err) => console.error('Failed to write to', `./test/files/${testName}-actual.xlsx`));
+        /* eslint-enable no-console */
+    }
+    expect(isEqual, `file does not match expectation: ${testName}`).to.be.true;
 };
-async function parser(property, /* { scope, cache } */) {
-    const time = Math.round(Math.random() * 1000);
-    // console.time(`parsing, waiting ${time}`);
-    await async.wait(time);
-    // console.timeEnd(`parsing, waiting ${time}`);
 
-    if (property.trim()[0] === '/') return corgi.block.close(property.trim().substring(1));
-
-    const path = property.split(' ')
-        .map(s => s.trim())
-        .filter(s => s);
-
-    const obj = path.reduce((prev, p) => {
-        if (typeof prev === 'undefined') return prev;
-        return prev[p];
-    }, json);
-    if (obj instanceof Array) return corgi.block.open(property.trim(), obj);
-    return corgi.data(obj);
-}
-
-describe.skip('integration', function() {
+describe('renderer', function() {
     const { Templater } = corgi;
-    let streamed;
-    before(async function createTestSpreadsheets() {
-        streamed = await Excel([
+
+    it('should accept both filepaths and file streams', async function() {
+        const templater = new Templater(() => '');
+
+        const stream = await Excel();
+        expect(async() => await templater.render(stream, 'xlsx')).to
+            .not.throw();
+
+        expect(async() => await templater.render('./test/empty.xlsx')).to
+            .not.throw();
+    });
+    it('should leave non-templated spreadsheets unchanged', async function() {
+        const templater = new Templater(() => '');
+
+        const basic = await Excel([
             ['foo', 'bar', 'fizz'],
             ['bloop', 'blap', 'blip'],
         ]);
-        await writeFile('./test/files/foo.xlsx', streamed);
-    });
-    it('should render', async function() {
-        const templater = new Templater(parser);
-        await templater.render('./test/files/foo.xlsx');
+        const rendered = await templater.render(basic, 'xlsx');
+        compareBuffers('unchanged', basic, rendered);
     });
 });
