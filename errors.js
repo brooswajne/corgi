@@ -1,15 +1,11 @@
-class RenderError { }
+class RenderError extends Error { }
 
 class XLSXRenderError extends RenderError {
     constructor(message, { worksheet, cell } = {}) {
-        super();
-
         let location = '';
         if (typeof worksheet !== 'undefined') location += worksheet + ':';
         if (typeof cell !== 'undefined') location += cell;
-        this.toString = function() {
-            return `[${location}] ${message}`;
-        };
+        super(`[${location}] ${message}`);
 
         this.setWorksheet = function(worksheet) {
             return new XLSXRenderError(message, { worksheet, cell });
