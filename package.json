@@ -11,8 +11,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "jszip": "^3.2.1",
-    "lodash": "^4.17.15"
+    "jszip": "^3.2.1"
   },
   "devDependencies": {
     "chai": "^4.2.0",
