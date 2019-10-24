@@ -119,10 +119,10 @@ describe('xlsx templater', function() {
             'close3': corgi.block.close('3'),
         }[tag])),
         Excel([
-            [ '[[ open3 ]]',  'im expanded', '[[ close3 ]]', 'im not' ],
+            [ '[[ open3 ]]', 'im expanded', '[[ close3 ]]', 'im not' ],
             [ 'neither',     'are',         'we' ],
-            [ '[[ open0 ]]', 'we',          'are',         'gone',  '[[ close0 ]]' ],
-            [ 'but',         '[[ open2 ]]',  'we',          'are',   '[[ close2 ]]' ],
+            [ '[[ open0 ]]', 'we',          'are',          'gone',  '[[ close0 ]]' ],
+            [ 'but',         '[[ open2 ]]', 'we',           'are',   '[[ close2 ]]' ],
         ], [
             [ '[[ open3 ]]', 'expand me', '[[ close3 ]]', 'not me', '[[ open2 ]]', 'me though', '[[ close2 ]]' ],
         ]),

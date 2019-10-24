@@ -17,7 +17,10 @@ const {
     getXMLTagRegex,
     setXMLTagAttributes,
 } = require('../lib/xml');
-const { XLSXRenderError: RenderError } = require('../errors'); // TODO: all error messages standardised in errors.js, eg. XLSX.Unclosed(block, cell), GENERIC.Mismatch()
+const {
+    TagParserError,
+    XLSXRenderError: RenderError,
+} = require('../errors');
 const { replace } = require('../lib/async');
 
 const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { attributes }) => {
@@ -165,10 +168,9 @@ class XLSXTemplater {
 
                         return worksheets;
                     }, {});
-                    Object.keys(worksheets).forEach(name => {
-                        if (!('sheet' in worksheets[name]))
-                            throw new Error(`Worksheet ${name} has rels but no xml`);
-                    });
+                    for (const ws in worksheets) {
+                        if (!('sheet' in worksheets[ws])) throw new Error(`Relationships file for worksheet ${ws} exists, but no content was found`);
+                    }
                     return worksheets;
                 },
             },
@@ -210,10 +212,11 @@ class XLSXTemplater {
                 const blocksOpened = [];
                 const blocksClosed = [];
                 await replace(sharedString, this.tagFinder, async(match, tag) => {
-                    const parsed = await this.parse(tag.trim());
+                    tag = tag.trim();
+                    const parsed = await this.parse(tag);
 
                     if (parsed.type.startsWith('block:')) {
-                        if (!parsed.block) reject(new RenderError('Block is required when opening/closing'));
+                        if (!parsed.block) throw TagParserError.MissingBlock(match);
                     } else return;
 
                     if (parsed.type === 'block:open') {
@@ -273,17 +276,15 @@ class XLSXTemplater {
                     });
                 });
             })).on('finish', () => {
-                if (openBlocks.length !== closedBlocks.length) return void reject(new RenderError('Mismatched numbers of openers and closers'));
+                if (openBlocks.length !== closedBlocks.length) return void reject(RenderError.BlockMismatch());
 
                 for (const opener of openBlocks) {
                     const closers = closedBlocks.filter(closer => closer.block === opener.block);
                     const sameRow = closers.filter(closer => closer.row === opener.row);
                     const sameCol = closers.filter(closer => closer.col === opener.col);
 
-                    if (!sameRow.length && !sameCol.length) return void reject(new RenderError(
-                        `Unclosed block "${opener.block}"`,
-                        { cell: opener.col + opener.row },
-                    ));
+                    if (!sameRow.length && !sameCol.length) return void reject(RenderError.UnclosedBlock(opener.block)
+                        .setCell(opener.col + opener.row));
                     else if (sameRow.length === 1 && !sameCol.length) blocks.row.push({
                         row: opener.row,
                         col: [opener.col, sameRow[0].col],
@@ -296,10 +297,8 @@ class XLSXTemplater {
                         block: opener.block,
                         data: opener.data,
                     });
-                    else return void reject(new RenderError(
-                        `Multiple matching closers for block "${opener.block}"`,
-                        { cell: opener.col + opener.row },
-                    ));
+                    else return void reject(RenderError.AmbiguousBlock(opener.block)
+                        .setCell(opener.col + opener.row));
                 }
 
                 resolve(blocks);
