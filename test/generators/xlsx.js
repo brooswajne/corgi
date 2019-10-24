@@ -2,10 +2,9 @@ const JSZip = require('jszip');
 
 const { isObject } = require('../../lib/common');
 const {
-    cellOrdering,
+    // cellOrdering,
     columnOrdering,
     columnToNumber,
-    columnRange,
     iterateColumns,
     iterateRows,
     numberToColumn,
@@ -59,8 +58,10 @@ module.exports = function constructWorkbook(...worksheetSpecs) {
             cellXML.push('</row>');
         }
 
-        const allCells = Object.keys(worksheetData)
-            .sort(cellOrdering);
+        // const allCells = Object.keys(worksheetData)
+        //     .sort(cellOrdering);
+        const allRows = cells.map(c => c.row)
+            .sort((a, b) => a - b);
         const allColumns = cells.map(c => c.col)
             .sort(columnOrdering);
         const worksheetXML = [
@@ -70,7 +71,7 @@ module.exports = function constructWorkbook(...worksheetSpecs) {
                 + ' xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision"'
                 + ' xmlns:xr2="http://schemas.microsoft.com/office/spreadsheetml/2015/revision2" xmlns:xr3="http://schemas.microsoft.com/office/spreadsheetml/2016/revision3"'
                 + ' xr:uid="{93522021-26F2-4A00-AFF9-FB6331673228}">',
-            `<dimension ref="${allCells[0]}:${allCells[allCells.length - 1]}" />`,
+            `<dimension ref="${allColumns[0]}${allRows[0]}:${allColumns[allColumns.length - 1]}${allRows[allRows.length - 1]}" />`,
 
             '<cols>',
             `<col min="${columnToNumber(allColumns[0])}" max="${columnToNumber(allColumns[allColumns.length - 1])}" width="15.578125" />`,
