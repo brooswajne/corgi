@@ -5,7 +5,7 @@ const { readFile } = require('./lib/common');
 const Errors = require('./errors');
 
 const RENDERERS = {
-    'xlsx': require('./templaters/xlsx'),
+    'xlsx': require('./renderers/xlsx'),
     // 'docx': require('./lib/docx'),
 };
 const TAG_FINDER_DEFAULT = /\[\[(.*?[^\\])\]\]/g; // finds eg. [[ my tag ]]
@@ -27,14 +27,14 @@ class Templater {
             else throw new Error('Type argument is required when not passing a filepath');
         }
         if (!(type in RENDERERS)) throw new Error('Filetype not supported');
+        const render = RENDERERS[type];
 
         const zip = await JSZip.loadAsync(source);
-        const renderer = new RENDERERS[type](zip, {
+        await render(zip, {
             parser: this.parser,
             tagFinder: this.tagFinder,
         });
 
-        await renderer.render();
         return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
     }
 }

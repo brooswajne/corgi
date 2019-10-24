@@ -143,8 +143,8 @@ const updateColumns = (dimensionChanges) => XMLTagReplacer('col', (col, { attrib
     });
 });
 
-class XLSXTemplater {
-    constructor(zip, { parser, tagFinder }) {
+class XLSX {
+    constructor(zip) {
         Object.defineProperties(this, {
             sharedStrings: {
                 get() {
@@ -186,22 +186,10 @@ class XLSXTemplater {
                 });
             });
         };
-
-        const cache = new Map();
-        this.parse = (property) => parser(property, { cache });
-        this.tagFinder = tagFinder;
-    }
-    async render() {
-        const { openers, closers } = await this.findBlocks();
-        console.log({ openers, closers });
-        const blocks = await this.resolveBlocks(openers, closers);
-        console.log({ blocks });
-
-        await this.expandWorksheets(blocks);
     }
 
     // traverse sharedStrings.xml to find strings corresponding to blocks which need to be expanded
-    findBlocks() {
+    findBlocks(tagFinder, parser) {
         return new Promise((resolve, reject) => {
             const openers = {};
             const closers = {};
@@ -211,9 +199,9 @@ class XLSXTemplater {
                 const sharedStringID = counter++;
                 const blocksOpened = [];
                 const blocksClosed = [];
-                await replace(sharedString, this.tagFinder, async(match, tag) => {
+                await replace(sharedString, tagFinder, async(match, tag) => {
                     tag = tag.trim();
-                    const parsed = await this.parse(tag);
+                    const parsed = await parser(tag);
 
                     if (parsed.type.startsWith('block:')) {
                         if (!parsed.block) throw TagParserError.MissingBlock(match);
@@ -346,4 +334,13 @@ class XLSXTemplater {
     }
 }
 
-module.exports = XLSXTemplater;
+module.exports = async function render(zip, { parser, tagFinder }) {
+    const xlsx = new XLSX(zip);
+
+    const { openers, closers } = await xlsx.findBlocks(tagFinder, parser);
+    console.log({ openers, closers });
+    const blocks = await xlsx.resolveBlocks(openers, closers);
+    console.log({ blocks });
+
+    await xlsx.expandWorksheets(blocks);
+};
