@@ -14,7 +14,7 @@ class InputStream extends Readable {
     }
 }
 class OutputWatcher extends Writable {
-    constructor(callback) {
+    constructor(callback = () => null) {
         super();
 
         let output = '';
@@ -53,6 +53,9 @@ class ChunkSplitter extends Transform {
 }
 
 module.exports = {
-    testTransformStreams,
     ChunkSplitter: (...args) => new ChunkSplitter(...args),
+    InputStream: (...args) => new InputStream(...args),
+    OutputWatcher: (...args) => new OutputWatcher(...args),
+
+    testTransformStreams,
 };
