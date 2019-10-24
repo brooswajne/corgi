@@ -11,7 +11,10 @@ const {
     numberToColumn,
     parseCellReference,
 } = require('../lib/excel');
-const { XMLTagReplacer } = require('../lib/streams');
+const {
+    XMLTagReplacer,
+    finish,
+} = require('../lib/streams');
 const {
     parseXMLTag,
     getXMLTagRegex,
@@ -175,123 +178,118 @@ class XLSX {
                 },
             },
         });
-        this.update = function(file, stream) {
-            return new Promise((resolve, reject) => {
-                const buffers = [];
-                stream.on('data', data => buffers.push(data));
-                stream.on('error', err => reject(err));
-                stream.on('end', () => {
-                    zip.file(file, Buffer.concat(buffers));
-                    resolve();
-                });
-            });
-        };
+
+        // update the contents of a file in the archive
+        this.update = (file, stream) => zip.file(file, stream);
+        // NOTE: JSZip keeps file contents internally as promise-based
+        // so setting contents to a stream is instantaneous
+        // (operation that takes time is reading a file's content)
     }
 
     // traverse sharedStrings.xml to find strings corresponding to blocks which need to be expanded
-    findBlocks(tagFinder, parser) {
-        return new Promise((resolve, reject) => {
-            const openers = {};
-            const closers = {};
+    async findBlocks(tagFinder, parser) {
+        const openers = {};
+        const closers = {};
 
-            let counter = 0;
-            const traverse = async(sharedString) => {
-                const sharedStringID = counter++;
-                const blocksOpened = [];
-                const blocksClosed = [];
-                await replace(sharedString, tagFinder, async(match, tag) => {
-                    tag = tag.trim();
-                    const parsed = await parser(tag);
+        let counter = 0;
+        const traverse = async(sharedString) => {
+            const sharedStringID = counter++;
+            const blocksOpened = [];
+            const blocksClosed = [];
+            await replace(sharedString, tagFinder, async(match, tag) => {
+                tag = tag.trim();
+                const parsed = await parser(tag);
 
-                    if (parsed.type.startsWith('block:')) {
-                        if (!parsed.block) throw TagParserError.MissingBlock(match);
-                    } else return;
+                if (parsed.type.startsWith('block:')) {
+                    if (!parsed.block) throw TagParserError.MissingBlock(match);
+                } else return;
 
-                    if (parsed.type === 'block:open') {
-                        const existing = blocksClosed.find(b => b.block === parsed.block);
-                        if (existing) blocksClosed.splice(blocksClosed.indexOf(existing), 1);
-                        else blocksOpened.push({ block: parsed.block, data: parsed.data });
-                    } else if (parsed.type === 'block:close') {
-                        const existing = blocksOpened.find(b => b.block === parsed.block);
-                        if (existing) blocksOpened.splice(blocksOpened.indexOf(existing), 1);
-                        else blocksClosed.push({ block: parsed.block, data: parsed.data });
-                    }
-                });
+                if (parsed.type === 'block:open') {
+                    const existing = blocksClosed.find(b => b.block === parsed.block);
+                    if (existing) blocksClosed.splice(blocksClosed.indexOf(existing), 1);
+                    else blocksOpened.push({ block: parsed.block, data: parsed.data });
+                } else if (parsed.type === 'block:close') {
+                    const existing = blocksOpened.find(b => b.block === parsed.block);
+                    if (existing) blocksOpened.splice(blocksOpened.indexOf(existing), 1);
+                    else blocksClosed.push({ block: parsed.block, data: parsed.data });
+                }
+            });
 
-                blocksOpened.forEach(block => {
-                    if (!(sharedStringID in openers)) openers[sharedStringID] = [];
-                    openers[sharedStringID].push(block);
-                });
-                blocksClosed.forEach(block => {
-                    if (!(sharedStringID in closers)) closers[sharedStringID] = [];
-                    closers[sharedStringID].push(block);
-                });
-            };
+            blocksOpened.forEach(block => {
+                if (!(sharedStringID in openers)) openers[sharedStringID] = [];
+                openers[sharedStringID].push(block);
+            });
+            blocksClosed.forEach(block => {
+                if (!(sharedStringID in closers)) closers[sharedStringID] = [];
+                closers[sharedStringID].push(block);
+            });
+        };
 
-            this.sharedStrings
-                .pipe(XMLTagReplacer('si', traverse))
-                .on('finish', () => resolve({ openers, closers }));
-        });
+        const find = this.sharedStrings
+            .pipe(XMLTagReplacer('si', traverse));
+        await finish(find);
+
+        return { openers, closers };
     }
 
     // traverse a worksheet's cells, matching to those strings which needed to be expanded from findBlocks()
-    resolveWorksheetBlocks(sheet, openers, closers) {
-        return new Promise((resolve, reject) => {
-            const blocks = { row: [], col: [] };
+    async resolveWorksheetBlocks(sheet, openers, closers) {
 
-            const openBlocks = [];
-            const closedBlocks = [];
-            sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
-                const isSharedString = attributes['t'] === 's';
-                if (!isSharedString) return;
+        const openBlocks = [];
+        const closedBlocks = [];
+        const resolve = sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
+            const isSharedString = attributes['t'] === 's';
+            if (!isSharedString) return;
 
-                const { row, col } = parseCellReference(attributes['r']);
-                const sharedString = getCellContents(cell);
-                if (sharedString in openers) openers[sharedString].forEach(block => {
-                    openBlocks.push({
-                        row: row,
-                        col: col,
-                        block: block.block,
-                        data: block.data,
-                    });
+            const { row, col } = parseCellReference(attributes['r']);
+            const sharedString = getCellContents(cell);
+            if (sharedString in openers) openers[sharedString].forEach(block => {
+                openBlocks.push({
+                    row: row,
+                    col: col,
+                    block: block.block,
+                    data: block.data,
                 });
-                if (sharedString in closers) closers[sharedString].forEach(block => {
-                    closedBlocks.push({
-                        row: row,
-                        col: col,
-                        block: block.block,
-                        data: block.data,
-                    });
-                });
-            })).on('finish', () => {
-                if (openBlocks.length !== closedBlocks.length) return void reject(RenderError.BlockMismatch());
-
-                for (const opener of openBlocks) {
-                    const closers = closedBlocks.filter(closer => closer.block === opener.block);
-                    const sameRow = closers.filter(closer => closer.row === opener.row);
-                    const sameCol = closers.filter(closer => closer.col === opener.col);
-
-                    if (!sameRow.length && !sameCol.length) return void reject(RenderError.UnclosedBlock(opener.block)
-                        .setCell(opener.col + opener.row));
-                    else if (sameRow.length === 1 && !sameCol.length) blocks.row.push({
-                        row: opener.row,
-                        col: [opener.col, sameRow[0].col],
-                        block: opener.block,
-                        data: opener.data,
-                    });
-                    else if (sameCol.length === 1 && !sameRow.length) blocks.col.push({
-                        row: [opener.row, sameCol[0].row],
-                        col: opener.col,
-                        block: opener.block,
-                        data: opener.data,
-                    });
-                    else return void reject(RenderError.AmbiguousBlock(opener.block)
-                        .setCell(opener.col + opener.row));
-                }
-
-                resolve(blocks);
             });
-        });
+            if (sharedString in closers) closers[sharedString].forEach(block => {
+                closedBlocks.push({
+                    row: row,
+                    col: col,
+                    block: block.block,
+                    data: block.data,
+                });
+            });
+        }));
+
+        await finish(resolve);
+
+        if (openBlocks.length !== closedBlocks.length) throw RenderError.BlockMismatch();
+
+        const blocks = { row: [], col: [] };
+        for (const opener of openBlocks) {
+            const closers = closedBlocks.filter(closer => closer.block === opener.block);
+            const sameRow = closers.filter(closer => closer.row === opener.row);
+            const sameCol = closers.filter(closer => closer.col === opener.col);
+
+            if (!sameRow.length && !sameCol.length) throw RenderError.UnclosedBlock(opener.block)
+                .setCell(opener.col + opener.row);
+            else if (sameRow.length === 1 && !sameCol.length) blocks.row.push({
+                row: opener.row,
+                col: [opener.col, sameRow[0].col],
+                block: opener.block,
+                data: opener.data,
+            });
+            else if (sameCol.length === 1 && !sameRow.length) blocks.col.push({
+                row: [opener.row, sameCol[0].row],
+                col: opener.col,
+                block: opener.block,
+                data: opener.data,
+            });
+            else throw RenderError.AmbiguousBlock(opener.block)
+                .setCell(opener.col + opener.row);
+        }
+
+        return blocks;
     }
     // traverse all worksheets, matching cells to those strings which needed to be expanded from findBlocks()
     async resolveBlocks(openers, closers) {
