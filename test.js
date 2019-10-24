@@ -41,10 +41,12 @@ ignore.add(['.git']);
 const { expect } = require('chai');
 
 const corgi = require('./corgi');
-const Excel = require('./test/excel');
+const Excel = require('./test/generators/xlsx');
 const { writeFile } = require('./lib/common');
 
-const FILE_OUTPUT_DIR = path.join(__dirname, './test/files/');
+const FILE_OUTPUT_DIR = path.join(__dirname, './test/generated/');
+if (!fs.existsSync(FILE_OUTPUT_DIR)) fs.mkdirSync(FILE_OUTPUT_DIR);
+
 const testTemplater = (format) => {
     const rootDirectory = path.join(FILE_OUTPUT_DIR, format);
     if (!fs.existsSync(rootDirectory)) fs.mkdirSync(rootDirectory);
