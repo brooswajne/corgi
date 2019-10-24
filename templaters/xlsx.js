@@ -20,9 +20,9 @@ const {
 const { XLSXRenderError: RenderError } = require('../errors'); // TODO: all error messages standardised in errors.js, eg. XLSX.Unclosed(block, cell), GENERIC.Mismatch()
 const { replace } = require('../lib/async');
 
-const expandRows = (blocks, {
-    rowsAdded = 0,
-} = {}) => XMLTagReplacer('row', (row, { attributes }) => {
+const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { attributes }) => {
+    const { rowsAdded } = dimensionChanges;
+
     let rowNumber = parseInt(attributes['r']);
     const rowBlocks = blocks.filter(block => block.row === rowNumber);
 
@@ -62,10 +62,12 @@ const expandRows = (blocks, {
             'spans': columnToNumber(columnsToCopy[0]) + ':' + columnToNumber(columnsToCopy[1]),
         });
     });
-    rowsAdded += rowsToCreate - 1;
+
+    dimensionChanges.rowsAdded += rowsToCreate - 1;
+
     return newRows.join('');
 }, { contentsOnly: false });
-const expandCols = (blocks) => XMLTagReplacer('row', (row, { attributes }) => {
+const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { attributes }) => {
     const rowNumber = parseInt(attributes['r']);
     const rowBlocks = blocks.filter(block => block.row[0] <= rowNumber && rowNumber <= block.row[1]);
 
@@ -73,6 +75,7 @@ const expandCols = (blocks) => XMLTagReplacer('row', (row, { attributes }) => {
     return row.replace(getXMLTagRegex('c'), (cell) => {
         const { attributes } = parseXMLTag(cell);
         let { col } = parseCellReference(attributes['r']);
+        const originalCol = col;
         const colBlocks = rowBlocks.filter(block => block.col === col);
 
         if (colsAdded !== 0) { // cells has been moved left/right by some other cells being expanded
@@ -90,7 +93,50 @@ const expandCols = (blocks) => XMLTagReplacer('row', (row, { attributes }) => {
             return setXMLTagAttributes(cell, { 'r': newCol + rowNumber });
         });
         colsAdded += colsToCreate - 1;
+
+        if (!(col in dimensionChanges.colsAdded)) dimensionChanges.colsAdded[originalCol] = colsToCreate - 1;
+        else dimensionChanges.colsAdded[originalCol] = Math.max(dimensionChanges.colsAdded[originalCol], colsToCreate - 1);
+
         return newCells.join('');
+    });
+}, { contentsOnly: false });
+const updateDimensions = (dimensionChanges) => XMLTagReplacer('dimension', (dimension, { attributes }) => {
+    const colsAdded = Object.values(dimensionChanges.colsAdded)
+        .reduce((sum, added) => sum + added, 0);
+
+    const [ oldStart, oldEnd ] = attributes['ref'].split(':');
+    const { col, row } = parseCellReference(oldEnd);
+
+    const newRow = row + dimensionChanges.rowsAdded;
+    const newCol = numberToColumn(columnToNumber(col) + colsAdded);
+
+    return setXMLTagAttributes(dimension, {
+        'ref': `${oldStart}:${newCol}${newRow}`,
+    });
+}, { contentsOnly: false });
+const updateColumns = (dimensionChanges) => XMLTagReplacer('col', (col, { attributes }) => {
+    const min = Number(attributes['min']);
+    const max = Number(attributes['max']);
+
+    const colsAddedBefore = Object.keys(dimensionChanges.colsAdded).reduce((colsAddedBefore, col) => {
+        const isBefore = columnToNumber(col) < min;
+        if (!isBefore) return colsAddedBefore;
+        const colsAdded = dimensionChanges.colsAdded[col];
+        return colsAddedBefore + colsAdded;
+    }, 0);
+    const colsAddedDuring = Object.keys(dimensionChanges.colsAdded).reduce((colsAddedDuring, col) => {
+        const colNum = columnToNumber(col);
+        const isDuring = min <= colNum && colNum <= max;
+        if (!isDuring) return colsAddedDuring;
+        const colsAdded = dimensionChanges.colsAdded[col];
+        return colsAddedDuring + colsAdded;
+    }, 0);
+
+    const newMin = min + colsAddedBefore;
+    const newMax = max + colsAddedBefore + colsAddedDuring;
+    return newMax < newMin ? '' : setXMLTagAttributes(col, {
+        'min': newMin,
+        'max': newMax,
     });
 }, { contentsOnly: false });
 
@@ -277,12 +323,26 @@ class XLSXTemplater {
     }
 
     async expandWorksheets(blocks) {
+        // expand
         const worksheets = this.worksheets;
+        const dimensionChanges = {};
         await Promise.all(Object.keys(worksheets).map(async(ws) => {
+            dimensionChanges[ws] = {
+                colsAdded: {},
+                rowsAdded: 0,
+            };
             const expanded = worksheets[ws].sheet
-                .pipe(expandCols(blocks[ws].col, this.parse))
-                .pipe(expandRows(blocks[ws].row, this.parse));
+                .pipe(expandCols(blocks[ws].col, dimensionChanges[ws]))
+                .pipe(expandRows(blocks[ws].row, dimensionChanges[ws]));
             await this.update(worksheets[ws].path, expanded);
+        }));
+        // update dimensions
+        const expanded = this.worksheets;
+        await Promise.all(Object.keys(dimensionChanges).map(async(ws) => {
+            const updated = expanded[ws].sheet
+                .pipe(updateDimensions(dimensionChanges[ws]))
+                .pipe(updateColumns(dimensionChanges[ws]));
+            await this.update(expanded[ws].path, updated);
         }));
     }
 }

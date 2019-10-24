@@ -73,8 +73,7 @@ module.exports = function constructWorkbook(...worksheetSpecs) {
             `<dimension ref="${allCells[0]}:${allCells[allCells.length - 1]}" />`,
 
             '<cols>',
-            ...columnRange(allColumns[0], allColumns[allColumns.length - 1])
-                .map(col => `<col min="${columnToNumber(col)}" max="${columnToNumber(col)}" width="15.578125" />`),
+            `<col min="${columnToNumber(allColumns[0])}" max="${columnToNumber(allColumns[allColumns.length - 1])}" width="15.578125" />`,
             '</cols>',
 
             '<sheetData>',
