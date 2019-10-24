@@ -1,4 +1,22 @@
-class RenderError extends Error { }
+class ParserError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = this.constructor.name;
+    }
+}
+
+class XMLParserError extends ParserError {
+    constructor(tag) {
+        super(`Unable to parse XML tag: ${tag}`);
+    }
+}
+
+class RenderError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = this.constructor.name;
+    }
+}
 
 class XLSXRenderError extends RenderError {
     constructor(message, { worksheet, cell } = {}) {
@@ -19,6 +37,9 @@ class XLSXRenderError extends RenderError {
 // class DOCXRenderError extends RenderError
 
 module.exports = {
+    ParserError,
+    XMLParserError,
+
     RenderError,
     XLSXRenderError,
 };
