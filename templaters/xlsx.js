@@ -66,7 +66,7 @@ const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
     dimensionChanges.rowsAdded += rowsToCreate - 1;
 
     return newRows.join('');
-}, { contentsOnly: false });
+});
 const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { attributes }) => {
     const rowNumber = parseInt(attributes['r']);
     const rowBlocks = blocks.filter(block => block.row[0] <= rowNumber && rowNumber <= block.row[1]);
@@ -99,7 +99,7 @@ const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
 
         return newCells.join('');
     });
-}, { contentsOnly: false });
+});
 const updateDimensions = (dimensionChanges) => XMLTagReplacer('dimension', (dimension, { attributes }) => {
     const colsAdded = Object.values(dimensionChanges.colsAdded)
         .reduce((sum, added) => sum + added, 0);
@@ -113,7 +113,7 @@ const updateDimensions = (dimensionChanges) => XMLTagReplacer('dimension', (dime
     return setXMLTagAttributes(dimension, {
         'ref': `${oldStart}:${newCol}${newRow}`,
     });
-}, { contentsOnly: false });
+});
 const updateColumns = (dimensionChanges) => XMLTagReplacer('col', (col, { attributes }) => {
     const min = Number(attributes['min']);
     const max = Number(attributes['max']);
@@ -138,7 +138,7 @@ const updateColumns = (dimensionChanges) => XMLTagReplacer('col', (col, { attrib
         'min': newMin,
         'max': newMax,
     });
-}, { contentsOnly: false });
+});
 
 class XLSXTemplater {
     constructor(zip, { parser, tagFinder }) {
@@ -189,7 +189,6 @@ class XLSXTemplater {
         this.parse = (property) => parser(property, { cache });
         this.tagFinder = tagFinder;
     }
-
     async render() {
         const { openers, closers } = await this.findBlocks();
         console.log({ openers, closers });
@@ -322,6 +321,7 @@ class XLSXTemplater {
         return blocks;
     }
 
+    // given previously resolved blocks, expand worksheet rows/columns as necessary
     async expandWorksheets(blocks) {
         // expand
         const worksheets = this.worksheets;
