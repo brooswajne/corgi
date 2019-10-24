@@ -14,7 +14,12 @@ class Templater {
     constructor(parser, {
         tagFinder = TAG_FINDER_DEFAULT,
     } = {}) {
-        this.parser = parser;
+        const { // support passing a single, multi-purpose function
+            identify = parser,
+            expand = parser,
+            evaluate = parser,
+        } = parser;
+        this.parser = { identify, expand, evaluate };
         this.tagFinder = tagFinder;
     }
 
@@ -30,10 +35,7 @@ class Templater {
         const render = RENDERERS[type];
 
         const zip = await JSZip.loadAsync(source);
-        await render(zip, {
-            parser: this.parser,
-            tagFinder: this.tagFinder,
-        });
+        await render(zip, this.tagFinder, this.parser);
 
         return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
     }

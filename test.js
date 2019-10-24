@@ -110,14 +110,17 @@ describe('xlsx templater', function() {
         ]),
     );
     test('should expand row blocks', // TODO: break up into multiple tests
-        new Templater((tag) => ({
-            'open0': corgi.block.open('0', []),
-            'close0': corgi.block.close('0'),
-            'open2': corgi.block.open('2', [ 1, 2 ]),
-            'close2': corgi.block.close('2'),
-            'open3': corgi.block.open('3', [ 1, 2, 3 ]),
-            'close3': corgi.block.close('3'),
-        }[tag])),
+        new Templater({
+            identify: (tag) => ({
+                'open0': corgi.block.open('0'),
+                'close0': corgi.block.close('0'),
+                'open2': corgi.block.open('2'),
+                'close2': corgi.block.close('2'),
+                'open3': corgi.block.open('3'),
+                'close3': corgi.block.close('3'),
+            }[tag]),
+            expand: (block) => Number(block),
+        }),
         Excel([
             [ '[[ open3 ]]', 'im expanded', '[[ close3 ]]', 'im not' ],
             [ 'neither',     'are',         'we' ],
@@ -140,14 +143,17 @@ describe('xlsx templater', function() {
         ]),
     );
     test('should expand column blocks',
-        new Templater((tag) => ({
-            'open0': corgi.block.open('0', []),
-            'close0': corgi.block.close('0'),
-            'open2': corgi.block.open('2', [ 1, 2 ]),
-            'close2': corgi.block.close('2'),
-            'open3': corgi.block.open('3', [ 1, 2, 3 ]),
-            'close3': corgi.block.close('3'),
-        }[tag])),
+        new Templater({
+            identify: (tag) => ({
+                'open0': corgi.block.open('0'),
+                'close0': corgi.block.close('0'),
+                'open2': corgi.block.open('2'),
+                'close2': corgi.block.close('2'),
+                'open3': corgi.block.open('3'),
+                'close3': corgi.block.close('3'),
+            }[tag]),
+            expand: (block) => Number(block),
+        }),
         Excel([
             [ '[[ open3 ]]',  'im',       'hi' ],
             [ 'expandme',     'not',      '[[ open0 ]]', 'wow' ],

@@ -43,13 +43,13 @@ const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
 
     if (!rowBlocks.length) return row;
 
-    const blocksData = rowBlocks.map(block => block.data);
-    const rowsToCreate = Math.max(...blocksData.map(d => d.length));
+    const blockSizes = rowBlocks.map(block => block.size);
+    const rowsToCreate = Math.max(...blockSizes);
     const newRows = constructArray(rowsToCreate, (idx) => {
         if (idx === 0) return row;
 
         const blockColumns = rowBlocks
-            .filter((block, num) => idx < blocksData[num].length)
+            .filter((block, num) => idx < blockSizes[num])
             .map(block => columnRange(...block.col));
         const columnsToCopy = blockColumns
             .reduce((arr, cols) => [...arr, ...cols], []) // flatten
@@ -91,11 +91,10 @@ const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
 
         if (!colBlocks.length) return cell;
 
-        const blocksData = colBlocks.map(block => block.data);
-        const colsToCreate = Math.max(...blocksData.map(d => d.length));
+        const blockSizes = colBlocks.map(block => block.size);
+        const colsToCreate = Math.max(...blockSizes);
         const newCells = constructArray(colsToCreate, (idx) => {
             const newCol = numberToColumn(columnToNumber(col) + idx);
-
             return setXMLTagAttributes(cell, { 'r': newCol + rowNumber });
         });
         colsAdded += colsToCreate - 1;
@@ -187,7 +186,7 @@ class XLSX {
     }
 
     // traverse sharedStrings.xml to find strings corresponding to blocks which need to be expanded
-    async findBlocks(tagFinder, parser) {
+    async findBlocks(tagFinder, identify) {
         const openers = {};
         const closers = {};
 
@@ -196,30 +195,28 @@ class XLSX {
             const sharedStringID = counter++;
             const blocksOpened = [];
             const blocksClosed = [];
+            // replace is just to iterate, doesn't actually change the string value
             await replace(sharedString, tagFinder, async(match, tag) => {
                 tag = tag.trim();
-                const parsed = await parser(tag);
+                const parsed = await identify(tag);
 
-                if (parsed.type.startsWith('block:')) {
-                    if (!parsed.block) throw TagParserError.MissingBlock(match);
-                } else return;
+                if (!parsed) return;
 
-                if (parsed.type === 'block:open') {
-                    const existing = blocksClosed.find(b => b.block === parsed.block);
-                    if (existing) blocksClosed.splice(blocksClosed.indexOf(existing), 1);
-                    else blocksOpened.push({ block: parsed.block, data: parsed.data });
-                } else if (parsed.type === 'block:close') {
-                    const existing = blocksOpened.find(b => b.block === parsed.block);
-                    if (existing) blocksOpened.splice(blocksOpened.indexOf(existing), 1);
-                    else blocksClosed.push({ block: parsed.block, data: parsed.data });
-                }
+                const { type } = parsed;
+                if (!type.startsWith('block:')) return;
+
+                const { block } = parsed;
+                if (!block) throw TagParserError.MissingBlock(match);
+
+                if (type === 'block:open') blocksOpened.push(block);
+                else if (type === 'block:close') blocksClosed.push(block);
             });
 
-            blocksOpened.forEach(block => {
+            blocksOpened.forEach((block) => {
                 if (!(sharedStringID in openers)) openers[sharedStringID] = [];
                 openers[sharedStringID].push(block);
             });
-            blocksClosed.forEach(block => {
+            blocksClosed.forEach((block) => {
                 if (!(sharedStringID in closers)) closers[sharedStringID] = [];
                 closers[sharedStringID].push(block);
             });
@@ -234,33 +231,26 @@ class XLSX {
 
     // traverse a worksheet's cells, matching to those strings which needed to be expanded from findBlocks()
     async resolveWorksheetBlocks(sheet, openers, closers) {
-
         const openBlocks = [];
         const closedBlocks = [];
+
         const resolve = sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
             const isSharedString = attributes['t'] === 's';
             if (!isSharedString) return;
 
             const { row, col } = parseCellReference(attributes['r']);
             const sharedString = getCellContents(cell);
-            if (sharedString in openers) openers[sharedString].forEach(block => {
-                openBlocks.push({
-                    row: row,
-                    col: col,
-                    block: block.block,
-                    data: block.data,
-                });
+            for (const block of openers[sharedString] || []) openBlocks.push({
+                row: row,
+                col: col,
+                block: block,
             });
-            if (sharedString in closers) closers[sharedString].forEach(block => {
-                closedBlocks.push({
-                    row: row,
-                    col: col,
-                    block: block.block,
-                    data: block.data,
-                });
+            for (const block of closers[sharedString] || []) closedBlocks.push({
+                row: row,
+                col: col,
+                block: block,
             });
         }));
-
         await finish(resolve);
 
         if (openBlocks.length !== closedBlocks.length) throw RenderError.BlockMismatch();
@@ -277,13 +267,11 @@ class XLSX {
                 row: opener.row,
                 col: [opener.col, sameRow[0].col],
                 block: opener.block,
-                data: opener.data,
             });
             else if (sameCol.length === 1 && !sameRow.length) blocks.col.push({
                 row: [opener.row, sameCol[0].row],
                 col: opener.col,
                 block: opener.block,
-                data: opener.data,
             });
             else throw RenderError.AmbiguousBlock(opener.block)
                 .setCell(opener.col + opener.row);
@@ -292,7 +280,8 @@ class XLSX {
         return blocks;
     }
     // traverse all worksheets, matching cells to those strings which needed to be expanded from findBlocks()
-    async resolveBlocks(openers, closers) {
+    async resolveBlocks(openers, closers, expand) {
+        // resolve block positions
         const worksheets = this.worksheets;
         const blocks = {};
         await Promise.all(Object.keys(worksheets).map(async(ws) => {
@@ -303,6 +292,22 @@ class XLSX {
                 });
             blocks[ws] = worksheetBlocks;
         }));
+
+        // resolve block sizes
+        await Promise.all(Object.keys(blocks).map(ws => {
+            return Promise.all([
+                blocks[ws].row,
+                blocks[ws].col,
+            ].map(arr => Promise.all(arr.map(async(block, idx) => {
+                const blockSize = await expand(block.block, {
+                    worksheet: ws,
+                    row: block.row,
+                    col: block.col,
+                });
+                arr[idx].size = blockSize;
+            }))));
+        }));
+
         return blocks;
     }
 
@@ -332,12 +337,12 @@ class XLSX {
     }
 }
 
-module.exports = async function render(zip, { parser, tagFinder }) {
+module.exports = async function render(zip, tagFinder, parser) {
     const xlsx = new XLSX(zip);
 
-    const { openers, closers } = await xlsx.findBlocks(tagFinder, parser);
+    const { openers, closers } = await xlsx.findBlocks(tagFinder, parser.identify);
     console.log({ openers, closers });
-    const blocks = await xlsx.resolveBlocks(openers, closers);
+    const blocks = await xlsx.resolveBlocks(openers, closers, parser.expand);
     console.log({ blocks });
 
     await xlsx.expandWorksheets(blocks);
