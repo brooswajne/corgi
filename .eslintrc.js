@@ -9,7 +9,9 @@ module.exports = {
     "extends": "eslint:recommended",
     "rules": {
         // errors
-        "indent": ["error", 4],
+        "indent": ["error", 4, {
+            "flatTernaryExpressions": true,
+        }],
         "linebreak-style": ["error", "unix"],
         "quotes": ["error", "single"],
         "semi": ["error", "always"],
@@ -37,6 +39,7 @@ module.exports = {
         "consistent-return": ["error", {
             "treatUndefinedAsUnspecified": true,
         }],
+        "operator-linebreak": "before",
         // warnings
         "no-unneeded-ternary": "warn",
         "no-multiple-empty-lines": "warn",
