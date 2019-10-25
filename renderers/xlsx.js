@@ -65,7 +65,7 @@ const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
             }) : '';
         }), {
             'r': newRow,
-            'spans': columnToNumber(columnsToCopy[0]) + ':' + columnToNumber(columnsToCopy[1]),
+            'spans': columnToNumber(columnsToCopy[0]) + ':' + columnToNumber(columnsToCopy[columnsToCopy.length - 1]),
         });
     });
 
@@ -78,7 +78,7 @@ const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
     const rowBlocks = blocks.filter(block => block.row[0] <= rowNumber && rowNumber <= block.row[1]);
 
     let colsAdded = 0;
-    return row.replace(getXMLTagRegex('c'), (cell) => {
+    row = row.replace(getXMLTagRegex('c'), (cell) => {
         const { attributes } = parseXMLTag(cell);
         let { col } = parseCellReference(attributes['r']);
         const originalCol = col;
@@ -104,6 +104,10 @@ const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
 
         return newCells.join('');
     });
+
+    const [ oldStart, oldEnd ] = attributes['spans'].split(':');
+    const newEnd = Number(oldEnd) + colsAdded;
+    return setXMLTagAttributes(row, { 'spans': `${oldStart}:${newEnd}` });
 });
 const updateDimensions = (dimensionChanges) => XMLTagReplacer('dimension', (dimension, { attributes }) => {
     const colsAdded = Object.values(dimensionChanges.colsAdded)

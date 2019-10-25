@@ -43,7 +43,7 @@ module.exports = function constructWorkbook(...worksheetSpecs) {
             const cols = cells.filter(c => c.row === row)
                 .map(c => c.col)
                 .sort(columnOrdering);
-            cellXML.push(`<row r="${row}" spans="${columnToNumber(cols[0])}:${columnToNumber(cols[1])}">`);
+            cellXML.push(`<row r="${row}" spans="${columnToNumber(cols[0])}:${columnToNumber(cols[cols.length - 1])}">`);
             for (const col of iterateColumns(cols[0], cols[cols.length - 1])) {
                 const cellRef = `${col}${row}`;
                 if (!(cellRef in worksheetData)) continue;
