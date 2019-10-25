@@ -39,7 +39,7 @@ module.exports = {
         "consistent-return": ["error", {
             "treatUndefinedAsUnspecified": true,
         }],
-        "operator-linebreak": "before",
+        "operator-linebreak": ["error", "before"],
         // warnings
         "no-unneeded-ternary": "warn",
         "no-multiple-empty-lines": "warn",
