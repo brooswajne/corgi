@@ -30,7 +30,7 @@ const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
     const { rowsAdded } = dimensionChanges;
 
     let rowNumber = parseInt(attributes['r']);
-    const rowBlocks = blocks.filter(block => block.row === rowNumber);
+    const rowBlocks = blocks.row.filter(block => block.row === rowNumber);
 
     if (rowsAdded !== 0) { // row has been moved down/up by some other rows being expanded
         rowNumber += rowsAdded;
@@ -75,19 +75,26 @@ const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
 });
 const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { attributes }) => {
     const rowNumber = parseInt(attributes['r']);
-    const rowBlocks = blocks.filter(block => block.row[0] <= rowNumber && rowNumber <= block.row[1]);
+    const colBlocksInRow = blocks.col.filter(block => block.row[0] <= rowNumber && rowNumber <= block.row[1]);
+    const rowBlocks = blocks.row.filter(block => block.row === rowNumber);
+
+    // keep track of cells which moved column, so we can update the positions of rowBlocks
+    const movedColumns = {};
 
     let colsAdded = 0;
     row = row.replace(getXMLTagRegex('c'), (cell) => {
         const { attributes } = parseXMLTag(cell);
         let { col } = parseCellReference(attributes['r']);
         const originalCol = col;
-        const colBlocks = rowBlocks.filter(block => block.col === col);
+        const colBlocks = colBlocksInRow.filter(block => block.col === col);
 
         if (colsAdded !== 0) { // cells has been moved left/right by some other cells being expanded
             col = numberToColumn(columnToNumber(col) + colsAdded);
             cell = setXMLTagAttributes(cell, { 'r': col + rowNumber });
         }
+
+        // prepare to store which columns this one was moved to
+        if (colsAdded !== 0 || colBlocks.length) movedColumns[originalCol] = [ col, col ];
 
         if (!colBlocks.length) return cell;
 
@@ -102,8 +109,15 @@ const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
         if (!(col in dimensionChanges.colsAdded)) dimensionChanges.colsAdded[originalCol] = colsToCreate - 1;
         else dimensionChanges.colsAdded[originalCol] = Math.max(dimensionChanges.colsAdded[originalCol], colsToCreate - 1);
 
+        movedColumns[originalCol][1] = numberToColumn(columnToNumber(col) + colsToCreate - 1);
         return newCells.join('');
     });
+
+    for (const block of rowBlocks) {
+        const [ startCol, endCol ] = block.col;
+        if (startCol in movedColumns) block.col[0] = movedColumns[startCol][0];
+        if (endCol in movedColumns) block.col[1] = movedColumns[endCol][1];
+    }
 
     const [ oldStart, oldEnd ] = attributes['spans'].split(':');
     const newEnd = Number(oldEnd) + colsAdded;
@@ -326,8 +340,8 @@ class XLSX {
                 rowsAdded: 0,
             };
             const expanded = worksheets[ws].sheet
-                .pipe(expandCols(blocks[ws].col, dimensionChanges[ws]))
-                .pipe(expandRows(blocks[ws].row, dimensionChanges[ws]));
+                .pipe(expandCols(blocks[ws], dimensionChanges[ws]))
+                .pipe(expandRows(blocks[ws], dimensionChanges[ws]));
             await this.update(worksheets[ws].path, expanded);
         }));
         // update dimensions
