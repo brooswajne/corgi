@@ -147,62 +147,121 @@ describe('xlsx renderer', function() {
         ]),
     );
 
-    test('should expand row blocks', // TODO: break up into multiple tests
-        new Templater({
-            identify: (tag) => ({
-                'open0': corgi.block.open('0'),
-                'close0': corgi.block.close('0'),
-                'open2': corgi.block.open('2'),
-                'close2': corgi.block.close('2'),
-                'open3': corgi.block.open('3'),
-                'close3': corgi.block.close('3'),
-            }[tag]),
+    describe('block expansion', function() {
+        const simpleExpandingTemplater = new Templater({
+            identify: (tag) => {
+                const block = tag.match(/\d+/g)[0];
+                return tag.includes('/')
+                    ? corgi.block.close(block)
+                    : corgi.block.open(block);
+            },
             expand: (block) => Number(block),
-        }),
-        Excel([
-            [ '[[ open3 ]]', 'im expanded', '[[ close3 ]]', 'im not' ],
-            [ 'neither',     'are',         'we' ],
-            [ '[[ open0 ]]', 'we',          'are',          'gone',  '[[ close0 ]]' ],
-            [ 'but',         '[[ open2 ]]', 'we',           'are',   '[[ close2 ]]' ],
-        ], [
-            [ '[[ open3 ]]', 'expand me', '[[ close3 ]]', 'not me', '[[ open2 ]]', 'me though', '[[ close2 ]]' ],
-        ]),
-        Excel([
-            [ '[[ open3 ]]', 'im expanded', '[[ close3 ]]', 'im not' ],
-            [ '[[ open3 ]]', 'im expanded', '[[ close3 ]]' ],
-            [ '[[ open3 ]]', 'im expanded', '[[ close3 ]]' ],
-            [ 'neither',    'are',         'we' ],
-            [ 'but',        '[[ open2 ]]',  'we',          'are',   '[[ close2 ]]' ],
-            [ null,         '[[ open2 ]]',  'we',          'are',   '[[ close2 ]]' ],
-        ], [
-            [ '[[ open3 ]]', 'expand me', '[[ close3 ]]', 'not me', '[[ open2 ]]', 'me though', '[[ close2 ]]' ],
-            [ '[[ open3 ]]', 'expand me', '[[ close3 ]]', null,     '[[ open2 ]]', 'me though', '[[ close2 ]]' ],
-            [ '[[ open3 ]]', 'expand me', '[[ close3 ]]', null,     null,          null,        null ],
-        ]),
-    );
-    test('should expand column blocks',
-        new Templater({
-            identify: (tag) => ({
-                'open0': corgi.block.open('0'),
-                'close0': corgi.block.close('0'),
-                'open2': corgi.block.open('2'),
-                'close2': corgi.block.close('2'),
-                'open3': corgi.block.open('3'),
-                'close3': corgi.block.close('3'),
-            }[tag]),
-            expand: (block) => Number(block),
-        }),
-        Excel([
-            [ '[[ open3 ]]',  'im',       'hi' ],
-            [ 'expandme',     'not',      '[[ open0 ]]', 'wow' ],
-            [ 'andme',        'expanded', 'bye' ],
-            [ '[[ close3 ]]', 'hah',      '[[ close0 ]]', 'wee' ],
-        ]),
-        Excel([
-            [ '[[ open3 ]]',  '[[ open3 ]]',  '[[ open3 ]]',  'im',       'hi' ],
-            [ 'expandme',     'expandme',     'expandme',     'not',      'wow' ],
-            [ 'andme',        'andme',        'andme',        'expanded' ],
-            [ '[[ close3 ]]', '[[ close3 ]]', '[[ close3 ]]', 'hah',      'wee' ],
-        ])
-    );
+        });
+
+        test('should expand row blocks of differing sizes',
+            simpleExpandingTemplater,
+            Excel([
+                [ '[[ 1 ]]', 'im expanded once', '[[ / 1 ]]' ],
+            ], [
+                [ '[[ 2 ]]', 'im expanded twice', '[[ / 2 ]]' ],
+            ], [
+                [ '[[ 10 ]]', 'im expanded ten times!', '[[ / 10 ]]' ],
+            ]),
+            Excel([
+                [ '[[ 1 ]]', 'im expanded once', '[[ / 1 ]]' ],
+            ], [
+                ...new Array(2).fill([ '[[ 2 ]]', 'im expanded twice', '[[ / 2 ]]' ]),
+            ], [
+                ...new Array(10).fill([ '[[ 10 ]]', 'im expanded ten times!', '[[ / 10 ]]' ]),
+            ]),
+        );
+
+        test('should expand column blocks of differing sizes',
+            simpleExpandingTemplater,
+            Excel([
+                [ '[[ 1 ]]' ],
+                [ 'im expanded once' ],
+                [ '[[ / 1 ]]' ],
+            ], [
+                [ '[[ 2 ]]' ],
+                [ 'im expanded twice' ],
+                [ '[[ / 2 ]]' ],
+            ], [
+                [ '[[ 10 ]]' ],
+                [ 'im expanded ten times!' ],
+                [ '[[ / 10 ]]' ],
+            ]),
+            Excel([
+                [ '[[ 1 ]]' ],
+                [ 'im expanded once' ],
+                [ '[[ / 1 ]]' ],
+            ], [
+                new Array(2).fill('[[ 2 ]]'),
+                new Array(2).fill('im expanded twice'),
+                new Array(2).fill('[[ / 2 ]]'),
+            ], [
+                new Array(10).fill('[[ 10 ]]'),
+                new Array(10).fill('im expanded ten times!'),
+                new Array(10).fill('[[ / 10 ]]'),
+            ])
+        );
+
+        test('should move surrounding cells',
+            simpleExpandingTemplater,
+            Excel([
+                [ 'we',       'are',         'above',       'topright' ],
+                [ '[[ 3 ]] ', 'im expanded', '[[ / 3 ]]',   'im not'   ],
+                [ 'we',       'are',         'below',       'botright' ],
+            ], [
+                [ 'we',       '[[ 3 ]]',     'we'       ],
+                [ 'are',      'im expanded', 'are'      ],
+                [ 'above',    '[[ / 3 ]]',   'below'    ],
+                [ 'botleft',  'im not',      'botright' ],
+            ]),
+            Excel([
+                [ 'we',       'are',         'above',       'topright' ],
+                [ '[[ 3 ]] ', 'im expanded', '[[ / 3 ]]',   'im not'   ],
+                [ '[[ 3 ]] ', 'im expanded', '[[ / 3 ]]'               ],
+                [ '[[ 3 ]] ', 'im expanded', '[[ / 3 ]]'               ],
+                [ 'we',       'are',         'below',       'botright' ],
+            ], [
+                [ 'we',       '[[ 3 ]]',     '[[ 3 ]]',     '[[ 3 ]]',     'we'       ],
+                [ 'are',      'im expanded', 'im expanded', 'im expanded', 'are'      ],
+                [ 'above',    '[[ / 3 ]]',   '[[ / 3 ]]',   '[[ / 3 ]]',   'below'    ],
+                [ 'botleft',  'im not',      'botright'                               ],
+            ]),
+        );
+
+        test('should collapse empty blocks',
+            simpleExpandingTemplater,
+            Excel([
+                [ 'we',       'are',         'above',     'topright' ],
+                [ '[[ 0 ]] ', 'im expanded', '[[ / 0 ]]', 'im not'   ],
+                [ 'we',       'are',         'below',     'botright' ],
+            ]),
+            Excel([
+                [ 'we',       'are',         'above',     'topright' ],
+                [ 'we',       'are',         'below',     'im not'    ],
+                [ null,       null,          null,        'botright' ],
+            ]),
+        );
+
+        test('should expand multiple blocks independently',
+            simpleExpandingTemplater,
+            Excel([
+                [ '[[ 2 ]]', 'twice',   '[[ 3 ]]',   '[[ / 2 ]]', '[[ 4 ]]', 'tres', '[[ / 4 ]]' ],
+                [ 'nope',    'nah',     'thrice',    'no',        null,      'non'               ],
+                [ 'nay',     '[[ 2 ]]', '[[ / 3 ]]', '[[ / 2 ]]', 'nopee'                        ],
+            ]),
+            Excel([
+                [ '[[ 2 ]]', 'twice',   '[[ 3 ]]',   '[[ 3 ]]',   '[[ 3 ]]',   '[[ / 2 ]]', '[[ 4 ]]', 'tres', '[[ / 4 ]]' ],
+                [ '[[ 2 ]]', 'twice',   '[[ 3 ]]',   '[[ 3 ]]',   '[[ 3 ]]',   '[[ / 2 ]]', '[[ 4 ]]', 'tres', '[[ / 4 ]]' ],
+                [ null,      null,      null,        null,        null,        null,        '[[ 4 ]]', 'tres', '[[ / 4 ]]' ],
+                [ null,      null,      null,        null,        null,        null,        '[[ 4 ]]', 'tres', '[[ / 4 ]]' ],
+                [ 'nope',    'nah',     'thrice',    'thrice',    'thrice',    'no',        null,      'non'               ],
+                [ 'nay',     '[[ 2 ]]', '[[ / 3 ]]', '[[ / 3 ]]', '[[ / 3 ]]', '[[ / 2 ]]', 'nopee'                        ],
+                [ null,      '[[ 2 ]]', '[[ / 3 ]]', '[[ / 3 ]]', '[[ / 3 ]]', '[[ / 2 ]]'                                 ],
+            ]),
+        );
+    });
 });
