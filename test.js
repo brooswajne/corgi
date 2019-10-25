@@ -38,6 +38,10 @@ ignore.add(['.git']);
 
 // END TO END TESTS
 
+const { TEST_MODE = 'default' } = process.env;
+const GENERATE_OUTPUT = TEST_MODE !== 'clean';
+const LOG_DIFFS = TEST_MODE === 'verbose';
+
 const { expect } = require('chai');
 
 const corgi = require('./corgi');
@@ -49,6 +53,7 @@ const FILE_OUTPUT_DIR = path.join(__dirname, './test/generated/');
 if (!fs.existsSync(FILE_OUTPUT_DIR)) fs.mkdirSync(FILE_OUTPUT_DIR);
 
 const MAX_CHANGES_DISPLAYED = 5;
+const MAX_DIRECTORY_LENGTH = 20;
 const testTemplater = (format) => {
     const rootDirectory = path.join(FILE_OUTPUT_DIR, format);
     if (!fs.existsSync(rootDirectory)) fs.mkdirSync(rootDirectory);
@@ -57,7 +62,7 @@ const testTemplater = (format) => {
         const shortTitle = title.toLowerCase()
             .substring('should '.length)
             .replace(/\s+/g, '-')
-            .substring(0, 16);
+            .substring(0, MAX_DIRECTORY_LENGTH);
 
 
         it(title, async function() {
@@ -72,7 +77,8 @@ const testTemplater = (format) => {
             if (differences.length) {
                 const message = differences.map(({ type, file, changes }) => {
                     const message = [ `\x1b[33m     File ${type}: ${file}\x1b[0m` ];
-                    if (changes && changes.length > MAX_CHANGES_DISPLAYED) message.push(
+                    if (!LOG_DIFFS) /* do nothing */;
+                    else if (changes && changes.length > MAX_CHANGES_DISPLAYED) message.push(
                         `       \x1b[2m<${changes.length} changes>\x1b[0m`
                     );
                     else if (changes) message.push(changes.map(change => {
@@ -93,16 +99,18 @@ const testTemplater = (format) => {
                 const directory = path.join(rootDirectory, shortTitle);
                 if (!fs.existsSync(directory)) fs.mkdirSync(directory);
 
-                /* eslint-disable no-console */
-                writeFile(`${directory}/expected.xlsx`, expectedOutput)
-                    .catch((err) => console.error('Failed to write to', `${directory}/expected.xlsx`, err));
-                writeFile(`${directory}/output.xlsx`, output)
-                    .catch((err) => console.error('Failed to write to', `${directory}/output.xlsx`, err));
-                /* eslint-enable no-console */
+                if (GENERATE_OUTPUT) {
+                    /* eslint-disable no-console */
+                    writeFile(`${directory}/expected.xlsx`, expectedOutput)
+                        .catch((err) => console.error('Failed to write to', `${directory}/expected.xlsx`, err));
+                    writeFile(`${directory}/output.xlsx`, output)
+                        .catch((err) => console.error('Failed to write to', `${directory}/output.xlsx`, err));
+                    /* eslint-enable no-console */
+                }
 
                 throw new Error('Output does not match expected:\n'
                     + message
-                    + `\n\x1b[1m     Written to directory ${directory}\x1b[0m`);
+                    + (GENERATE_OUTPUT ? `\n     \x1b[34mOutputting to directory ${directory}\x1b[0m` : ''));
             }
         });
     };

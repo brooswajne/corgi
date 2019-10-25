@@ -5,7 +5,9 @@
   "main": "corgi.js",
   "scripts": {
     "lint": "eslint .",
-    "test": "mocha test.js"
+    "test": "mocha test.js",
+    "test:verbose": "TEST_MODE=verbose mocha test.js",
+    "test:clean": "TEST_MODE=clean mocha test.js"
   },
   "keywords": [
     "template",
