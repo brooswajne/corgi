@@ -42,11 +42,13 @@ const { expect } = require('chai');
 
 const corgi = require('./corgi');
 const Excel = require('./test/generators/xlsx');
+const diff = require('./test/diff');
 const { writeFile } = require('./lib/common');
 
 const FILE_OUTPUT_DIR = path.join(__dirname, './test/generated/');
 if (!fs.existsSync(FILE_OUTPUT_DIR)) fs.mkdirSync(FILE_OUTPUT_DIR);
 
+const MAX_CHANGES_DISPLAYED = 5;
 const testTemplater = (format) => {
     const rootDirectory = path.join(FILE_OUTPUT_DIR, format);
     if (!fs.existsSync(rootDirectory)) fs.mkdirSync(rootDirectory);
@@ -66,8 +68,28 @@ const testTemplater = (format) => {
             const output = await templater.render(input, format);
             expect(output, 'templater output is not a buffer').to.be.instanceof(Buffer);
 
-            const isEqual = output.equals(input);
-            if (!isEqual) {
+            const differences = await diff(expectedOutput, output);
+            if (differences.length) {
+                const message = differences.map(({ type, file, changes }) => {
+                    const message = [ `\x1b[33m     File ${type}: ${file}\x1b[0m` ];
+                    if (changes && changes.length > MAX_CHANGES_DISPLAYED) message.push(
+                        `       \x1b[2m<${changes.length} changes>\x1b[0m`
+                    );
+                    else if (changes) message.push(changes.map(change => {
+                        // each change is an array of lines with type: context/added/removed
+                        return change.map(({ type, line }) => {
+                            const color = type === 'context' ? '\x1b[37m'
+                                : type === 'added' ? '\x1b[32m'
+                                : '\x1b[31m';
+                            const symbol = type === 'context' ? ''
+                                : type === 'added' ? '+'
+                                : '-';
+                            return `${color}       ${symbol} ${line}\x1b[0m`;
+                        }).join('\n');
+                    }).join('\n\n'));
+                    return message.join('\n');
+                }).join('\n');
+
                 const directory = path.join(rootDirectory, shortTitle);
                 if (!fs.existsSync(directory)) fs.mkdirSync(directory);
 
@@ -78,26 +100,33 @@ const testTemplater = (format) => {
                     .catch((err) => console.error('Failed to write to', `${directory}/output.xlsx`, err));
                 /* eslint-enable no-console */
 
-                throw new Error(`Output does not match expected, writing to directory: ${directory}`);
+                throw new Error('Output does not match expected:\n'
+                    + message
+                    + `\n\x1b[1m     Written to directory ${directory}\x1b[0m`);
             }
         });
     };
 };
 
-describe('xlsx templater', function() {
-    const { Templater } = corgi;
+const { Templater } = corgi;
+describe('xlsx renderer', function() {
     const test = testTemplater('xlsx');
 
-    it('should accept both filepaths and file streams', async function() {
+    it('should accept both filepaths and file streams', function(done) {
         const templater = new Templater(() => '');
 
-        const stream = await Excel();
-        expect(async() => await templater.render(stream, 'xlsx')).to
-            .not.throw();
-
-        expect(async() => await templater.render('./test/empty.xlsx')).to
-            .not.throw();
+        Promise.all([
+            Excel().then((stream) => templater.render(stream, 'xlsx')),
+            templater.render('./test/empty.xlsx'),
+        ]).then(() => done(), done);
     });
+    it('should require a filetype when passed a stream', function(done) {
+        const templater = new Templater(() => '');
+
+        Excel().then((stream) => templater.render(stream))
+            .then(() => done('Did not throw'), () => done());
+    });
+
     test('should leave non-templated spreadsheets unchanged',
         new Templater(() => ''),
         Excel([
@@ -109,6 +138,7 @@ describe('xlsx templater', function() {
             ['bloop', 'blap', 'blip'],
         ]),
     );
+
     test('should expand row blocks', // TODO: break up into multiple tests
         new Templater({
             identify: (tag) => ({
