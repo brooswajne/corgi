@@ -58,14 +58,19 @@ const testTemplater = (format) => {
     const rootDirectory = path.join(FILE_OUTPUT_DIR, format);
     if (!fs.existsSync(rootDirectory)) fs.mkdirSync(rootDirectory);
 
-    return function test(title, templater, input, expectedOutput) {
+    function test(title, templater, input, expectedOutput, {
+        only = false,
+        skip = false,
+    } = {}) {
         const shortTitle = title.toLowerCase()
             .substring('should '.length)
             .replace(/\s+/g, '-')
             .substring(0, MAX_DIRECTORY_LENGTH);
 
-
-        it(title, async function() {
+        const run = only ? it.only
+            : skip ? it.skip
+            : it;
+        run(title, async function() {
             [ input, expectedOutput ] = await Promise.all([ input, expectedOutput ]); // if promises passed
             expect(input, 'templater test input is not a buffer').to.be.instanceof(Buffer);
             expect(expectedOutput, 'templater test expected output is not a buffer').to.be.instanceof(Buffer);
@@ -113,7 +118,17 @@ const testTemplater = (format) => {
                     + (GENERATE_OUTPUT ? `\n     \x1b[34mOutputting to directory ${directory}\x1b[0m` : ''));
             }
         });
-    };
+    }
+    test.only = (...args) => test(...args.slice(0, 4), {
+        ...args[4],
+        only: true,
+    });
+    test.skip = (...args) => test(...args.slice(0, 4), {
+        ...args[4],
+        skip: true,
+    });
+
+    return test;
 };
 
 const { Templater } = corgi;
