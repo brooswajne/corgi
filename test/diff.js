@@ -70,12 +70,25 @@ module.exports = async function getDiff(buf1, buf2, {
         if (!hasChanged) continue;
 
         if (ignoreSharedStringOrder && file === 'xl/sharedStrings.xml') {
-            const unorderedDiff = jsdiff.diffLines(
-                sharedStrings[0].sort().join('\n'),
-                sharedStrings[1].sort().join('\n'),
-            );
-            const changes = unorderedDiff.filter(({ added, removed }) => added || removed)
-                .map(({ added, value }) => ({ type: added ? 'added' : 'removed', line: value.replace(/\n$/g, '') }));
+            const sortedStrings = sharedStrings.map(s => Array.from(s).sort());
+            const changes = [];
+            for (let idx = 0; idx < sortedStrings[0].length; idx++) {
+                const oldString = sortedStrings[0][idx];
+                const newString = sortedStrings[1][idx];
+
+                if (oldString !== newString) changes.push([
+                    { type: 'removed', line: oldString },
+                    ...idx < sortedStrings[1].length
+                        ? [ { type: 'added', line: newString } ]
+                        : [],
+                ]);
+            }
+            for (let idx = sortedStrings[0].length; idx < sortedStrings[1].length; idx++) {
+                const newString = sortedStrings[1][idx];
+                changes.push([
+                    { type: 'added', line: newString },
+                ]);
+            }
             if (changes.length) diff.push({
                 type: 'changed',
                 file: file,
