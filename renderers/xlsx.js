@@ -7,14 +7,15 @@ const {
     constructArray,
 } = require('../lib/common');
 const {
+    columnOrdering,
     columnsInclude,
     columnToNumber,
     getCellContents,
     getSharedStringContents,
     getWorksheetName,
-    setCellContents,
     numberToColumn,
     parseCellReference,
+    setCellContents,
 } = require('../lib/excel');
 const {
     XMLTagReplacer,
@@ -123,36 +124,22 @@ const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
 
     return row;
 });
-const updateDimensions = (dimensionChanges) => XMLTagReplacer('dimension', (dimension, { attributes }) => {
-    const colsAdded = Object.values(dimensionChanges.colsAdded)
-        .reduce((sum, added) => sum + added, 0);
-
-    const [ oldStart, oldEnd ] = attributes['ref'].split(':');
-    const { col, row } = parseCellReference(oldEnd);
-
-    const newRow = row + dimensionChanges.rowsAdded;
-    const newCol = numberToColumn(columnToNumber(col) + colsAdded);
-
-    return setXMLTagAttributes(dimension, {
-        'ref': `${oldStart}:${newCol}${newRow}`,
-    });
-});
-const updateColumns = (dimensionChanges) => XMLTagReplacer('col', (col, { attributes }) => {
+const updateColumns = (colsAdded) => XMLTagReplacer('col', (col, { attributes }) => {
     const min = Number(attributes['min']);
     const max = Number(attributes['max']);
 
-    const colsAddedBefore = Object.keys(dimensionChanges.colsAdded).reduce((colsAddedBefore, col) => {
+    const colsAddedBefore = Object.keys(colsAdded).reduce((colsAddedBefore, col) => {
         const isBefore = columnToNumber(col) < min;
         if (!isBefore) return colsAddedBefore;
-        const colsAdded = dimensionChanges.colsAdded[col];
-        return colsAddedBefore + colsAdded;
+        const added = colsAdded[col];
+        return colsAddedBefore + added;
     }, 0);
-    const colsAddedDuring = Object.keys(dimensionChanges.colsAdded).reduce((colsAddedDuring, col) => {
+    const colsAddedDuring = Object.keys(colsAdded).reduce((colsAddedDuring, col) => {
         const colNum = columnToNumber(col);
         const isDuring = min <= colNum && colNum <= max;
         if (!isDuring) return colsAddedDuring;
-        const colsAdded = dimensionChanges.colsAdded[col];
-        return colsAddedDuring + colsAdded;
+        const added = colsAdded[col];
+        return colsAddedDuring + added;
     }, 0);
 
     const newMin = min + colsAddedBefore;
@@ -363,11 +350,10 @@ class XLSX {
             this.update(path, expanding);
             await finish(expanding);
         });
-        // update dimensions
+        // update worksheet columns
         this.forEachWorksheet(async({ sheet, path }, ws) => {
             const updating = sheet
-                .pipe(updateDimensions(dimensionChanges[ws]))
-                .pipe(updateColumns(dimensionChanges[ws]));
+                .pipe(updateColumns(dimensionChanges[ws].colsAdded));
             this.update(path, updating);
         });
     }
@@ -556,6 +542,62 @@ class XLSX {
 
         await this.pruneSharedStrings(sharedStringsUsed);
     }
+
+    async updateWorksheetDimensions() {
+        const dimensions = {};
+        await this.forEachWorksheet(async({ sheet, path }, ws) => {
+            let minRow = null;
+            let maxRow = null;
+            let minCol = null;
+            let maxCol = null;
+
+            const parse = sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
+                const { row, col } = parseCellReference(attributes['r']);
+                if (minRow === null || row < minRow) minRow = row;
+                if (maxRow === null || maxRow < row) maxRow = row;
+                if (minCol === null || columnOrdering(minCol, col) === 1) minCol = col;
+                if (maxCol === null || columnOrdering(col, maxCol) === 1) maxCol = col;
+                return cell;
+            })).pipe(XMLTagReplacer('row', (row) => {
+                let minCol = null;
+                let maxCol = null;
+                row.replace(getXMLTagRegex('c'), (cell) => {
+                    const { attributes } = parseXMLTag(cell);
+                    const { col } = parseCellReference(attributes['r']);
+                    if (minCol === null || columnOrdering(minCol, col) === 1) minCol = col;
+                    if (maxCol === null || columnOrdering(col, maxCol) === 1) maxCol = col;
+                });
+                return setXMLTagAttributes(row, {
+                    spans: `${columnToNumber(minCol)}:${columnToNumber(maxCol)}`,
+                });
+            }));
+            this.update(path, parse);
+            await finish(parse);
+
+            dimensions[ws] = {
+                minCell: `${minCol}${minRow}`,
+                maxCell: `${maxCol}${maxRow}`,
+                minCol: columnToNumber(minCol),
+                maxCol: columnToNumber(maxCol),
+            };
+        });
+
+        this.forEachWorksheet(({ sheet, path }, ws) => {
+            const {
+                minCell, maxCell,
+                minCol, maxCol,
+            } = dimensions[ws];
+            const updated = sheet.pipe(XMLTagReplacer(
+                'dimension',
+                (dim) => setXMLTagAttributes(dim, { ref: `${minCell}:${maxCell}` }),
+            )).pipe(XMLTagReplacer('col', (col, { attributes }) => {
+                const min = Math.max(Number(attributes['min']), minCol);
+                const max = Math.min(Number(attributes['max']), maxCol);
+                return min > max ? '' : setXMLTagAttributes(col, { min, max });
+            }));
+            this.update(path, updated);
+        });
+    }
 }
 
 module.exports = async function render(zip, tagFinder, parser) {
@@ -575,4 +617,6 @@ module.exports = async function render(zip, tagFinder, parser) {
         evaluate: parser.evaluate,
         tagFinder: tagFinder,
     });
+
+    await xlsx.updateWorksheetDimensions();
 };
