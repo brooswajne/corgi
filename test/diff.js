@@ -4,10 +4,30 @@ const jsdiff = require('diff');
 const JSZip = require('jszip');
 const path = require('path');
 
+const { getSharedStringContents } = require('../lib/excel');
+const {
+    XMLTagReplacer,
+    finish,
+} = require('../lib/streams');
+
 const STRING_FILES = ['.xml', '.rels'];
+
+async function getSharedStrings(zip) {
+    const file = zip.files['xl/sharedStrings.xml'];
+    const sharedStrings = [];
+    const getting = file.nodeStream().pipe(XMLTagReplacer(
+        'si',
+        (sharedString, { index: sharedStringID }) => sharedStrings[sharedStringID] = getSharedStringContents(sharedString),
+        { contentsOnly: true },
+    ));
+    await finish(getting);
+    return sharedStrings;
+}
+
 module.exports = async function getDiff(buf1, buf2, {
     ignoreFiles = [],
     ignoreDirectories = true,
+    ignoreSharedStringOrder = false, // when diffing xlsx, whether sharedstrings order (therefore ids) matters
 } = {}) {
     const diff = [];
     if (buf1.equals(buf2)) return diff;
@@ -39,6 +59,9 @@ module.exports = async function getDiff(buf1, buf2, {
         });
     }
 
+    const sharedStrings = !ignoreSharedStringOrder ? []
+        : await Promise.all([ zip1, zip2 ].map(getSharedStrings));
+
     for (const { file, versions } of toDiff) {
         const filetype = path.extname(file);
         const contents = await Promise.all(versions.map(f => f.async('nodebuffer')));
@@ -46,7 +69,19 @@ module.exports = async function getDiff(buf1, buf2, {
         const hasChanged = !contents[0].equals(contents[1]);
         if (!hasChanged) continue;
 
-        if (STRING_FILES.includes(filetype)) {
+        if (ignoreSharedStringOrder && file === 'xl/sharedStrings.xml') {
+            const unorderedDiff = jsdiff.diffLines(
+                sharedStrings[0].sort().join('\n'),
+                sharedStrings[1].sort().join('\n'),
+            );
+            const changes = unorderedDiff.filter(({ added, removed }) => added || removed)
+                .map(({ added, value }) => ({ type: added ? 'added' : 'removed', line: value.replace(/\n$/g, '') }));
+            if (changes.length) diff.push({
+                type: 'changed',
+                file: file,
+                changes: changes,
+            });
+        } else if (STRING_FILES.includes(filetype)) {
             const formatted = contents.map(buf => format(buf.toString(), {
                 lineSeparator: '\n',
             }));
@@ -85,7 +120,39 @@ module.exports = async function getDiff(buf1, buf2, {
                 ]);
             }
 
-            diff.push({
+            const isWorksheet = file.startsWith('xl/worksheets/')
+                && !file.startsWith('xl/worksheets/_rels/');
+            if (ignoreSharedStringOrder && isWorksheet) {
+                const actualChanges = changes.reduce((actualChanges, change) => {
+                    const isSharedStringIDChange = change[0].type === 'context' && /^\s*<c.*?(t="s".*?)?>$/.test(change[0].line)
+                        && change[1].type === 'context' && /^\s*<v>$/.test(change[1].line)
+                        && change[2].type === 'removed' && /^\s*\d+$/.test(change[2].line)
+                        && change[3].type === 'added' && /^\s*\d+$/.test(change[3].line)
+                        && change[4].type === 'context' && /^\s*<\/v>$/.test(change[4].line)
+                        && change[5].type === 'context' && /^\s*<\/c>$/.test(change[5].line);
+                    if (!isSharedStringIDChange) actualChanges.push(change);
+                    else {
+                        const cellRef = change[0].line.match(/^\s*<c.*?r="(\w+)".*?>$/)[1];
+
+                        const oldSharedStringID = change[2].line.match(/^\s*(\d+)$/)[1];
+                        const newSharedStringID = change[3].line.match(/^\s*(\d+)$/)[1];
+                        const oldSharedString = sharedStrings[0][oldSharedStringID];
+                        const newSharedString = sharedStrings[1][newSharedStringID];
+
+                        if (oldSharedString !== newSharedString) actualChanges.push([
+                            { type: 'context', line: `Cell ${cellRef}` },
+                            { type: 'removed', line: oldSharedString },
+                            { type: 'added', line: newSharedString },
+                        ]);
+                    }
+                    return actualChanges;
+                }, []);
+                if (actualChanges.length) diff.push({
+                    type: 'changed',
+                    file: file,
+                    changes: actualChanges,
+                });
+            } else diff.push({
                 type: 'changed',
                 file: file,
                 changes: changes,

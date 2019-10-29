@@ -52,7 +52,7 @@ const { writeFile } = require('./lib/common');
 const FILE_OUTPUT_DIR = path.join(__dirname, './test/generated/');
 if (!fs.existsSync(FILE_OUTPUT_DIR)) fs.mkdirSync(FILE_OUTPUT_DIR);
 
-const MAX_CHANGES_DISPLAYED = 5;
+const MAX_CHANGES_DISPLAYED = 10;
 const MAX_DIRECTORY_LENGTH = 20;
 const testTemplater = (format) => {
     const rootDirectory = path.join(FILE_OUTPUT_DIR, format);
@@ -78,7 +78,9 @@ const testTemplater = (format) => {
             const output = await templater.render(input, format);
             expect(output, 'templater output is not a buffer').to.be.instanceof(Buffer);
 
-            const differences = await diff(expectedOutput, output);
+            const differences = await diff(expectedOutput, output, {
+                ignoreSharedStringOrder: format === 'xlsx',
+            });
             if (differences.length) {
                 const message = differences.map(({ type, file, changes }) => {
                     const message = [ `\x1b[33m     File ${type}: ${file}\x1b[0m` ];
