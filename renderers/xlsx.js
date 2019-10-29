@@ -1,13 +1,18 @@
+const { TAG_TYPES } = require('../lib/enums');
+const {
+    TagParserError,
+    XLSXRenderError: RenderError,
+} = require('../errors');
 const {
     constructArray,
-    unique,
 } = require('../lib/common');
 const {
-    columnOrdering,
-    columnRange,
+    columnsInclude,
     columnToNumber,
     getCellContents,
+    getSharedStringContents,
     getWorksheetName,
+    setCellContents,
     numberToColumn,
     parseCellReference,
 } = require('../lib/excel');
@@ -19,14 +24,11 @@ const {
     parseXMLTag,
     getXMLTagRegex,
     setXMLTagAttributes,
+    setXMLTagContents,
 } = require('../lib/xml');
-const {
-    TagParserError,
-    XLSXRenderError: RenderError,
-} = require('../errors');
 const { replace } = require('../lib/async');
 
-const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { attributes }) => {
+const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { attributes }) => { // TODO: this happens after expandCols, put it below
     const { rowsAdded } = dimensionChanges;
 
     let rowNumber = parseInt(attributes['r']);
@@ -47,25 +49,36 @@ const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
     const rowsToCreate = Math.max(...blockSizes);
     const newRows = constructArray(rowsToCreate, (idx) => {
         if (idx === 0) return row;
+        const newRowNum = rowNumber + idx;
 
-        const blockColumns = rowBlocks
-            .filter((block, num) => idx < blockSizes[num])
-            .map(block => columnRange(...block.col));
-        const columnsToCopy = blockColumns
-            .reduce((arr, cols) => [...arr, ...cols], []) // flatten
-            .filter(unique())
-            .sort(columnOrdering);
+        // blocks which get expanded this far (have at least size `idx`)
+        const thisRowBlocks = rowBlocks
+            .filter((block, num) => idx < blockSizes[num]);
+        // logic to figure out if a column from the original row should be copied this far
+        const thisRowBlocksIncludes = thisRowBlocks
+            .map((block) => columnsInclude(block.col[0], block.col[1]));
+        const shouldCopy = (col) => thisRowBlocksIncludes
+            .some((includes) => includes(col));
 
-        const newRow = rowNumber + idx;
-        return setXMLTagAttributes(row.replace(getXMLTagRegex('c'), (cell) => {
+        let minCol = Infinity;
+        let maxCol = -Infinity;
+        const newRow = row.replace(getXMLTagRegex('c'), (cell) => {
             const { attributes } = parseXMLTag(cell);
             const { col } = parseCellReference(attributes['r']);
-            return columnsToCopy.includes(col) ? setXMLTagAttributes(cell, {
-                'r': col + newRow,
-            }) : '';
-        }), {
-            'r': newRow,
-            'spans': columnToNumber(columnsToCopy[0]) + ':' + columnToNumber(columnsToCopy[columnsToCopy.length - 1]),
+
+            if (!shouldCopy(col)) return '';
+
+            const colNum = columnToNumber(col);
+            if (colNum < minCol) minCol = colNum;
+            if (colNum > maxCol) maxCol = colNum;
+
+            return setXMLTagAttributes(cell, { 'r': `${col}${newRowNum}` });
+        });
+
+        if (![ minCol, maxCol ].every(Number.isFinite)) throw new Error(`Unable to update row span: ${row}`);
+        return setXMLTagAttributes(newRow, {
+            'r': newRowNum,
+            'spans': columnToNumber(minCol) + ':' + columnToNumber(maxCol),
         });
     });
 
@@ -75,8 +88,7 @@ const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
 });
 const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { attributes }) => {
     const rowNumber = parseInt(attributes['r']);
-    const colBlocksInRow = blocks.col.filter(block => block.row[0] <= rowNumber && rowNumber <= block.row[1]);
-    const rowBlocks = blocks.row.filter(block => block.row === rowNumber);
+    const colBlocks = blocks.col.filter(block => block.row[0] <= rowNumber && rowNumber <= block.row[1]);
 
     // keep track of cells which moved column, so we can update the positions of rowBlocks
     const movedColumns = {};
@@ -86,7 +98,7 @@ const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
         const { attributes } = parseXMLTag(cell);
         let { col } = parseCellReference(attributes['r']);
         const originalCol = col;
-        const colBlocks = colBlocksInRow.filter(block => block.col === col);
+        const thisCellBlocks = colBlocks.filter(block => block.col === col);
 
         if (colsAdded !== 0) { // cells has been moved left/right by some other cells being expanded
             col = numberToColumn(columnToNumber(col) + colsAdded);
@@ -94,9 +106,9 @@ const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
         }
 
         // prepare to store which columns this one was moved to
-        if (colsAdded !== 0 || colBlocks.length) movedColumns[originalCol] = [ col, col ];
+        if (colsAdded !== 0 || thisCellBlocks.length) movedColumns[originalCol] = [ col, col ];
 
-        if (!colBlocks.length) return cell;
+        if (!thisCellBlocks.length) return cell;
 
         const blockSizes = colBlocks.map(block => block.size);
         const colsToCreate = Math.max(...blockSizes);
@@ -113,6 +125,7 @@ const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
         return newCells.join('');
     });
 
+    const rowBlocks = blocks.row.filter(block => block.row === rowNumber);
     for (const block of rowBlocks) {
         const [ startCol, endCol ] = block.col;
         if (startCol in movedColumns) block.col[0] = movedColumns[startCol][0];
@@ -163,12 +176,14 @@ const updateColumns = (dimensionChanges) => XMLTagReplacer('col', (col, { attrib
     });
 });
 
+const SHARED_STRINGS = 'xl/sharedStrings.xml';
+const POSSIBLE_TAG_TYPES = Object.values(TAG_TYPES);
 class XLSX {
     constructor(zip) {
         Object.defineProperties(this, {
             sharedStrings: {
                 get() {
-                    return zip.files['xl/sharedStrings.xml'].nodeStream();
+                    return zip.files[SHARED_STRINGS].nodeStream();
                 },
             },
             worksheets: {
@@ -207,27 +222,33 @@ class XLSX {
     async findBlocks(tagFinder, identify) {
         const openers = {};
         const closers = {};
+        const toParse = new Map();
 
-        let counter = 0;
-        const traverse = async(sharedString) => {
-            const sharedStringID = counter++;
+        const traverse = async(sharedString, { index: sharedStringID }) => {
             const blocksOpened = [];
             const blocksClosed = [];
             // replace is just to iterate, doesn't actually change the string value
-            await replace(sharedString, tagFinder, async(match, tag) => {
+            sharedString = await replace(sharedString, tagFinder, async(match, tag) => {
                 tag = tag.trim();
+
                 const parsed = await identify(tag);
-
-                if (!parsed) return;
-
+                if (!parsed) throw TagParserError.Unidentified(match);
                 const { type } = parsed;
-                if (!type.startsWith('block:')) return;
+                if (!POSSIBLE_TAG_TYPES.includes(type)) throw TagParserError.UnrecognisedType(match, type);
 
-                const { block } = parsed;
-                if (!block) throw TagParserError.MissingBlock(match);
-
-                if (type === 'block:open') blocksOpened.push(block);
-                else if (type === 'block:close') blocksClosed.push(block);
+                switch (type) {
+                case TAG_TYPES.BLOCK_OPEN:
+                    if (!parsed.block) throw TagParserError.MissingBlock(match);
+                    blocksOpened.push(parsed.block);
+                    return '';
+                case TAG_TYPES.BLOCK_CLOSE:
+                    if (!parsed.block) throw TagParserError.MissingBlock(match);
+                    blocksClosed.push(parsed.block);
+                    return '';
+                default:
+                    toParse.set(sharedStringID, []);
+                    return match;
+                }
             });
 
             blocksOpened.forEach((block) => {
@@ -238,13 +259,16 @@ class XLSX {
                 if (!(sharedStringID in closers)) closers[sharedStringID] = [];
                 closers[sharedStringID].push(block);
             });
+
+            return sharedString;
         };
 
-        const find = this.sharedStrings
-            .pipe(XMLTagReplacer('si', traverse));
-        await finish(find);
+        const traversing = this.sharedStrings
+            .pipe(XMLTagReplacer('si', traverse, { contentsOnly: true }));
+        this.update(SHARED_STRINGS, traversing);
 
-        return { openers, closers };
+        await finish(traversing);
+        return { openers, closers, toParse };
     }
 
     // traverse a worksheet's cells, matching to those strings which needed to be expanded from findBlocks()
@@ -339,29 +363,226 @@ class XLSX {
                 colsAdded: {},
                 rowsAdded: 0,
             };
-            const expanded = worksheets[ws].sheet
+            const expanding = worksheets[ws].sheet
                 .pipe(expandCols(blocks[ws], dimensionChanges[ws]))
-                .pipe(expandRows(blocks[ws], dimensionChanges[ws]));
-            await this.update(worksheets[ws].path, expanded);
+                .pipe(expandRows(blocks[ws], dimensionChanges[ws],));
+            this.update(worksheets[ws].path, expanding);
+            await finish(expanding);
         }));
         // update dimensions
         const expanded = this.worksheets;
-        await Promise.all(Object.keys(dimensionChanges).map(async(ws) => {
-            const updated = expanded[ws].sheet
+        for (const ws in dimensionChanges) {
+            const updating = expanded[ws].sheet
                 .pipe(updateDimensions(dimensionChanges[ws]))
                 .pipe(updateColumns(dimensionChanges[ws]));
-            await this.update(expanded[ws].path, updated);
+            this.update(expanded[ws].path, updating);
+        }
+    }
+
+    // figure out which scopes the sharedStrings in toParse need to be resolved against
+    async resolveSharedStringScopes(toParse, blocks) {
+        let totalSharedStringCount = 0;
+
+        const worksheets = this.worksheets;
+        await Promise.all(Object.keys(worksheets).map(async(ws) => {
+            const worksheetBlocks = blocks[ws];
+            const stream = worksheets[ws].sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
+                if (attributes['t'] !== 's') return cell;
+
+                totalSharedStringCount += 1;
+                const sharedStringID = Number(getCellContents(cell));
+                if (!toParse.has(sharedStringID)) return cell;
+
+                const { row, col } = parseCellReference(attributes['r']);
+
+                const rowBlocks = worksheetBlocks.row.filter(block => {
+                    const endRow = block.row + block.size;
+                    return block.row <= row && row <= endRow
+                        && columnsInclude(block.col[0], block.col[1])(col);
+                }).map(block => ({
+                    block: block.block,
+                    index: row - block.row,
+                }));
+                const colBlocks = worksheetBlocks.col.filter(block => {
+                    const endCol = numberToColumn(columnToNumber(block.col) + block.size);
+                    return block.row[0] <= row && row <= block.row[1]
+                        && columnsInclude(block.col, endCol)(col);
+                }).map(block => ({
+                    block: block.block,
+                    index: columnToNumber(col) - columnToNumber(block.col),
+                }));
+
+                toParse.get(sharedStringID).push({
+                    worksheet: ws,
+                    cell: attributes['r'],
+                    scopes: rowBlocks.concat(colBlocks),
+                });
+
+                return cell;
+            }, { contentsOnly: true }));
+            // even though we're not actually updating the worksheet contents, need to do this otherwise its stream is already consumed
+            this.update(worksheets[ws].path, stream);
+            await finish(stream);
         }));
+
+        return { totalSharedStringCount };
+    }
+    async pruneSharedStrings(used) {
+        // map old sharedString to its new id
+        const moved = new Map(used.entries());
+
+        let pruned = 0;
+        let uniqueSharedStringCount = 0;
+        const seen = new Map();
+        const pruning = this.sharedStrings.pipe(XMLTagReplacer('si', (sharedString, { index: sharedStringID }) => {
+            // prune all unused strings
+            const isUnused = !used.has(sharedStringID);
+            if (isUnused) {
+                pruned += 1;
+                return '';
+            }
+
+            // prune all empty strings
+            const string = getSharedStringContents(sharedString);
+            const isEmpty = !string;
+            if (isEmpty) {
+                pruned += 1;
+                moved.set(sharedStringID, null);
+                return '';
+            }
+
+            // prune all duplicate strings
+            const isDuplicate = seen.has(string);
+            if (isDuplicate) {
+                pruned += 1;
+                moved.set(sharedStringID, seen.get(string));
+                return '';
+            }
+
+            // unpruned, but id might have changed due to previous prunings
+            const newSharedStringID = moved.get(sharedStringID) - pruned;
+            moved.set(sharedStringID, newSharedStringID);
+
+            uniqueSharedStringCount += 1;
+            return sharedString;
+        }));
+        this.update(SHARED_STRINGS, pruning);
+        await finish(pruning);
+
+        // update worksheets cells to point to new sharedstring locations post-pruning
+
+        let totalSharedStringCount = 0;
+        const worksheets = this.worksheets;
+        await Promise.all(Object.keys(worksheets).map(async(ws) => {
+            const updating = worksheets[ws].sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
+                if (attributes['t'] !== 's') return cell;
+
+                const sharedStringID = Number(getCellContents(cell));
+                const newSharedStringID = moved.get(sharedStringID);
+
+                if (newSharedStringID === null) {
+                    const { t, r, ...extraAttributes } = attributes;
+                    const remainingAttributes = Object.keys(extraAttributes).length;
+                    return remainingAttributes
+                        ? setXMLTagContents(setXMLTagAttributes(cell, { t: null }), null)
+                        : '';
+                } else totalSharedStringCount += 1;
+
+                return setCellContents(cell, newSharedStringID);
+            })).pipe(XMLTagReplacer('row', (row, { attributes }) => {
+                const { contents } = parseXMLTag(row);
+                if (contents.trim()) return row;
+
+                const { r, spans, ...extraAttributes } = attributes;
+                const remainingAttributes = Object.keys(extraAttributes).length;
+                return remainingAttributes ? row
+                    : '';
+            }));
+            this.update(worksheets[ws].path, updating);
+            await finish(updating);
+        }));
+
+        const updatedCounts = this.sharedStrings.pipe(XMLTagReplacer('sst', (sst) => setXMLTagAttributes(sst, {
+            count: totalSharedStringCount,
+            uniqueCount: uniqueSharedStringCount,
+        })));
+        this.update(SHARED_STRINGS, updatedCounts);
+    }
+    async updateSharedStrings(toParse, {
+        blocks,
+        evaluate,
+        tagFinder,
+    }) {
+        // get total number of sharedStrings used, and update toParse to figure out which scopes its strings need to be resolved against
+
+        await this.resolveSharedStringScopes(toParse, blocks);
+
+        // parse each sharedString in toParse against each of its scopes
+
+        const updateSharedString = async(sharedString, { index: sharedStringID }) => {
+            if (!toParse.has(sharedStringID)) return sharedString;
+
+            const scopes = toParse.get(sharedStringID);
+            const evaluateScope = (scope) => replace(
+                sharedString,
+                tagFinder,
+                (match, tag) => evaluate(tag.trim(), scope)
+            );
+
+            const newStrings = await Promise.all(scopes.map(evaluateScope));
+            return newStrings.join('');
+        };
+        const updated = this.sharedStrings.pipe(XMLTagReplacer('si', updateSharedString));
+        this.update(SHARED_STRINGS, updated);
+
+        // update cell sharedString references to point to newly created strings for its scope
+
+        const sharedStringsUsed = new Set();
+        const added = Array.from(toParse).reduce((added, [ id, created ]) => {
+            added[id] = created.length - 1;
+            return added;
+        }, []);
+        const worksheets = this.worksheets;
+        await Promise.all(Object.keys(worksheets).map(async(ws) => {
+            const updating = worksheets[ws].sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
+                if (attributes['t'] !== 's') return cell;
+
+                const sharedStringID = Number(getCellContents(cell));
+                const addedBefore = added.slice(0, sharedStringID);
+                const totalAdded = toParse.has(sharedStringID)
+                    ? toParse.get(sharedStringID).findIndex(({ cell }) => cell === attributes['r'])
+                        + addedBefore.reduce((sum, strings) => sum + strings, 0)
+                    : addedBefore.reduce((sum, strings) => sum + strings, 0);
+
+                const newSharedStringID = sharedStringID + totalAdded;
+                sharedStringsUsed.add(newSharedStringID);
+                return setCellContents(cell, newSharedStringID.toString());
+            }));
+            this.update(worksheets[ws].path, updating);
+            await finish(updating);
+        }));
+
+        // remove unused/duplicate/empty strings
+
+        await this.pruneSharedStrings(sharedStringsUsed);
     }
 }
 
 module.exports = async function render(zip, tagFinder, parser) {
     const xlsx = new XLSX(zip);
 
-    const { openers, closers } = await xlsx.findBlocks(tagFinder, parser.identify);
-    console.log({ openers, closers });
+    const {
+        openers,
+        closers,
+        toParse,
+    } = await xlsx.findBlocks(tagFinder, parser.identify);
     const blocks = await xlsx.resolveBlocks(openers, closers, parser.expand);
-    console.log({ blocks });
 
     await xlsx.expandWorksheets(blocks);
+
+    await xlsx.updateSharedStrings(toParse, {
+        blocks: blocks,
+        evaluate: parser.evaluate,
+        tagFinder: tagFinder,
+    });
 };

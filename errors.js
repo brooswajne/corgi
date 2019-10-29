@@ -15,6 +15,12 @@ class TagParserError extends ParserError {
     static MissingBlock(tag) {
         return new this(tag, 'Opening or closing a block without providing an identifier');
     }
+    static UnrecognisedType(tag, type) {
+        return new this(tag, `Invalid tag type returned by parser.identify ("${type}")`);
+    }
+    static Unidentified(tag) {
+        return new this(tag, 'Tag was not identified');
+    }
 }
 
 class XMLParserError extends ParserError {
@@ -22,6 +28,10 @@ class XMLParserError extends ParserError {
         let message = `Unable to parse XML tag: ${tag}`;
         if (reason) message += `\n${reason}`;
         super(message);
+    }
+
+    static UnexpectedContents(tag) {
+        return new this(tag, 'Only one content node is expected');
     }
 }
 

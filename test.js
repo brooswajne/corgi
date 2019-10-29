@@ -183,11 +183,11 @@ describe('xlsx renderer', function() {
                 [ '[[ 10 ]]', 'im expanded ten times!', '[[ / 10 ]]' ],
             ]),
             Excel([
-                [ '[[ 1 ]]', 'im expanded once', '[[ / 1 ]]' ],
+                [ null, 'im expanded once', null ],
             ], [
-                ...new Array(2).fill([ '[[ 2 ]]', 'im expanded twice', '[[ / 2 ]]' ]),
+                ...new Array(2).fill([ null, 'im expanded twice', null ]),
             ], [
-                ...new Array(10).fill([ '[[ 10 ]]', 'im expanded ten times!', '[[ / 10 ]]' ]),
+                ...new Array(10).fill([ null, 'im expanded ten times!', null ]),
             ]),
         );
 
@@ -207,17 +207,17 @@ describe('xlsx renderer', function() {
                 [ '[[ / 10 ]]' ],
             ]),
             Excel([
-                [ '[[ 1 ]]' ],
+                [ null ],
                 [ 'im expanded once' ],
-                [ '[[ / 1 ]]' ],
+                [ null ],
             ], [
-                new Array(2).fill('[[ 2 ]]'),
+                new Array(2).fill(null),
                 new Array(2).fill('im expanded twice'),
-                new Array(2).fill('[[ / 2 ]]'),
+                new Array(2).fill(null),
             ], [
-                new Array(10).fill('[[ 10 ]]'),
+                new Array(10).fill(null),
                 new Array(10).fill('im expanded ten times!'),
-                new Array(10).fill('[[ / 10 ]]'),
+                new Array(10).fill(null),
             ])
         );
 
@@ -225,7 +225,7 @@ describe('xlsx renderer', function() {
             simpleExpandingTemplater,
             Excel([
                 [ 'we',       'are',         'above',       'topright' ],
-                [ '[[ 3 ]] ', 'im expanded', '[[ / 3 ]]',   'im not'   ],
+                [ '[[ 3 ]]',  'im expanded', '[[ / 3 ]]',   'im not'   ],
                 [ 'we',       'are',         'below',       'botright' ],
             ], [
                 [ 'we',       '[[ 3 ]]',     'we'       ],
@@ -234,15 +234,15 @@ describe('xlsx renderer', function() {
                 [ 'botleft',  'im not',      'botright' ],
             ]),
             Excel([
-                [ 'we',       'are',         'above',       'topright' ],
-                [ '[[ 3 ]] ', 'im expanded', '[[ / 3 ]]',   'im not'   ],
-                [ '[[ 3 ]] ', 'im expanded', '[[ / 3 ]]'               ],
-                [ '[[ 3 ]] ', 'im expanded', '[[ / 3 ]]'               ],
-                [ 'we',       'are',         'below',       'botright' ],
+                [ 'we',       'are',         'above', 'topright' ],
+                [ null,       'im expanded', null,    'im not'   ],
+                [ null,       'im expanded', null                ],
+                [ null,       'im expanded', null                ],
+                [ 'we',       'are',         'below', 'botright' ],
             ], [
-                [ 'we',       '[[ 3 ]]',     '[[ 3 ]]',     '[[ 3 ]]',     'we'       ],
+                [ 'we',       null,          null,          null,          'we'       ],
                 [ 'are',      'im expanded', 'im expanded', 'im expanded', 'are'      ],
-                [ 'above',    '[[ / 3 ]]',   '[[ / 3 ]]',   '[[ / 3 ]]',   'below'    ],
+                [ 'above',    null,          null,          null,          'below'    ],
                 [ 'botleft',  'im not',      'botright'                               ],
             ]),
         );
@@ -253,29 +253,63 @@ describe('xlsx renderer', function() {
                 [ 'we',       'are',         'above',     'topright' ],
                 [ '[[ 0 ]] ', 'im expanded', '[[ / 0 ]]', 'im not'   ],
                 [ 'we',       'are',         'below',     'botright' ],
+            ], [
+                [ 'top',   'in not',      'top'   ],
+                [ 'we',    '[[ 0 ]]',     'we'    ],
+                [ 'are',   'im expanded', 'are'   ],
+                [ 'left',  '[[ / 0 ]]',   'right' ],
+                [ 'bot',   'im not',      'bot'   ],
             ]),
             Excel([
                 [ 'we',       'are',         'above',     'topright' ],
                 [ 'we',       'are',         'below',     'im not'    ],
                 [ null,       null,          null,        'botright' ],
+            ], [
+                [ 'top',   'in not',      'top'   ],
+                [ 'we',    'we'                   ],
+                [ 'are',   'are'                  ],
+                [ 'left',  'right'                ],
+                [ 'bot',   'im not',      'bot'   ],
             ]),
         );
 
         test('should expand multiple blocks independently',
             simpleExpandingTemplater,
             Excel([
-                [ '[[ 2 ]]', 'twice',   '[[ 3 ]]',   '[[ / 2 ]]', '[[ 4 ]]', 'tres', '[[ / 4 ]]' ],
-                [ 'nope',    'nah',     'thrice',    'no',        null,      'non'               ],
-                [ 'nay',     '[[ 2 ]]', '[[ / 3 ]]', '[[ / 2 ]]', 'nopee'                        ],
+                [ '[[ 2 ]]', 'twice',   '[[ 3 ]]',      '[[ / 2 ]]', '[[ 4 ]]', 'tres', '[[ / 4 ]]' ],
+                [ 'nope',    'nah',     'thrice',       'no',        null,      'non'               ],
+                [ 'nay',     '[[ 2 ]]', '[[ / 3 ]]wow', '[[ / 2 ]]', 'nopee'                        ],
             ]),
             Excel([
-                [ '[[ 2 ]]', 'twice',   '[[ 3 ]]',   '[[ 3 ]]',   '[[ 3 ]]',   '[[ / 2 ]]', '[[ 4 ]]', 'tres', '[[ / 4 ]]' ],
-                [ '[[ 2 ]]', 'twice',   '[[ 3 ]]',   '[[ 3 ]]',   '[[ 3 ]]',   '[[ / 2 ]]', '[[ 4 ]]', 'tres', '[[ / 4 ]]' ],
-                [ null,      null,      null,        null,        null,        null,        '[[ 4 ]]', 'tres', '[[ / 4 ]]' ],
-                [ null,      null,      null,        null,        null,        null,        '[[ 4 ]]', 'tres', '[[ / 4 ]]' ],
-                [ 'nope',    'nah',     'thrice',    'thrice',    'thrice',    'no',        null,      'non'               ],
-                [ 'nay',     '[[ 2 ]]', '[[ / 3 ]]', '[[ / 3 ]]', '[[ / 3 ]]', '[[ / 2 ]]', 'nopee'                        ],
-                [ null,      '[[ 2 ]]', '[[ / 3 ]]', '[[ / 3 ]]', '[[ / 3 ]]', '[[ / 2 ]]'                                 ],
+                [ null,   'twice',  null,     null,     null,     null,  null,   'tres', null  ],
+                [ null,   'twice',  null,     null,     null,     null,  null,   'tres', null  ],
+                [ null,   null,     null,     null,     null,     null,  null,   'tres', null  ],
+                [ null,   null,     null,     null,     null,     null,  null,   'tres', null  ],
+                [ 'nope', 'nah',    'thrice', 'thrice', 'thrice', 'no',  null,           'non' ],
+                [ 'nay',  null,     'wow',    'wow',    'wow',    null,  'nopee'               ],
+                [ null,   null,     'wow',    'wow',    'wow'                                  ],
+            ]),
+        );
+
+        test('should parse templated tags',
+            new Templater({
+                identify: (tag) => tag.startsWith('open:')
+                    ? corgi.block.open(tag.substring('open:'.length))
+                    : tag.startsWith('close:') ? corgi.block.close(tag.substring('close:'.length))
+                    : corgi.data(),
+                expand: (block) => Number(block),
+                evaluate: (tag, { cell, scopes }) => {
+                    const scopesAsStrings = scopes.map(({ block, index }) => `[${block}.${index}]`);
+                    return `${cell}:data:${tag}${scopesAsStrings.join('')}`;
+                },
+            }),
+            Excel([
+                [ '[[ open:3 ]]wow', '[[ foo ]]', '[[ bar ]][[ close:3 ]]', '[[ outside ]]' ],
+            ]),
+            Excel([
+                [ 'wow', 'B1:data:foo[3.0]', 'C1:data:bar[3.0]', 'D1:data:outside' ],
+                [ 'wow', 'B2:data:foo[3.1]', 'C2:data:bar[3.1]'                    ],
+                [ 'wow', 'B3:data:foo[3.2]', 'C3:data:bar[3.2]'                    ],
             ]),
         );
     });

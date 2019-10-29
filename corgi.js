@@ -1,19 +1,22 @@
 const path = require('path');
 const JSZip = require('jszip');
 
+const ERROR_CLASSES = require('./errors');
+const ENUMS = require('./lib/enums');
 const { readFile } = require('./lib/common');
-const Errors = require('./errors');
 
 const RENDERERS = {
     'xlsx': require('./renderers/xlsx'),
     // 'docx': require('./lib/docx'),
 };
+const { TAG_TYPES } = ENUMS;
 const TAG_FINDER_DEFAULT = /\[\[(.*?[^\\])\]\]/g; // finds eg. [[ my tag ]]
 
 class Templater {
     constructor(parser, {
         tagFinder = TAG_FINDER_DEFAULT,
     } = {}) {
+        if (!parser) throw new TypeError('No parser specified');
         const { // support passing a single, multi-purpose function
             identify = parser,
             expand = parser,
@@ -41,19 +44,16 @@ class Templater {
     }
 }
 
-module.exports = {
+Object.assign(Templater, {
+    ...ERROR_CLASSES,
+    ...ENUMS,
     Templater,
-    Errors,
 
     block: {
-        open: (block, data) => {
-            return { type: 'block:open', block, data };
-        },
-        close: (block) => {
-            return { type: 'block:close', block };
-        },
+        open: (block) => ({ type: TAG_TYPES.BLOCK_OPEN, block: block }),
+        close: (block) => ({ type: TAG_TYPES.BLOCK_CLOSE, block: block }),
     },
-    data: (data) => {
-        return { type: 'data', data };
-    },
-};
+    data: () => ({ type: TAG_TYPES.DATA }),
+});
+
+module.exports = Templater;
