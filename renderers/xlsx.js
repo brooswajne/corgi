@@ -60,26 +60,15 @@ const expandRows = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
         const shouldCopy = (col) => thisRowBlocksIncludes
             .some((includes) => includes(col));
 
-        let minCol = Infinity;
-        let maxCol = -Infinity;
         const newRow = row.replace(getXMLTagRegex('c'), (cell) => {
             const { attributes } = parseXMLTag(cell);
             const { col } = parseCellReference(attributes['r']);
 
             if (!shouldCopy(col)) return '';
-
-            const colNum = columnToNumber(col);
-            if (colNum < minCol) minCol = colNum;
-            if (colNum > maxCol) maxCol = colNum;
-
             return setXMLTagAttributes(cell, { 'r': `${col}${newRowNum}` });
         });
 
-        if (![ minCol, maxCol ].every(Number.isFinite)) throw new Error(`Unable to update row span: ${row}`);
-        return setXMLTagAttributes(newRow, {
-            'r': newRowNum,
-            'spans': columnToNumber(minCol) + ':' + columnToNumber(maxCol),
-        });
+        return setXMLTagAttributes(newRow, { 'r': newRowNum });
     });
 
     dimensionChanges.rowsAdded += rowsToCreate - 1;
@@ -132,9 +121,7 @@ const expandCols = (blocks, dimensionChanges) => XMLTagReplacer('row', (row, { a
         if (endCol in movedColumns) block.col[1] = movedColumns[endCol][1];
     }
 
-    const [ oldStart, oldEnd ] = attributes['spans'].split(':');
-    const newEnd = Number(oldEnd) + colsAdded;
-    return setXMLTagAttributes(row, { 'spans': `${oldStart}:${newEnd}` });
+    return row;
 });
 const updateDimensions = (dimensionChanges) => XMLTagReplacer('dimension', (dimension, { attributes }) => {
     const colsAdded = Object.values(dimensionChanges.colsAdded)
@@ -216,6 +203,12 @@ class XLSX {
         // NOTE: JSZip keeps file contents internally as promise-based
         // so setting contents to a stream is instantaneous
         // (operation that takes time is reading a file's content)
+    }
+    forEachWorksheet(func) {
+        const worksheets = this.worksheets;
+        const promises = Object.keys(worksheets)
+            .map((ws) => func(worksheets[ws], ws));
+        return Promise.all(promises);
     }
 
     // traverse sharedStrings.xml to find strings corresponding to blocks which need to be expanded
@@ -324,16 +317,18 @@ class XLSX {
     // traverse all worksheets, matching cells to those strings which needed to be expanded from findBlocks()
     async resolveBlocks(openers, closers, expand) {
         // resolve block positions
-        const worksheets = this.worksheets;
         const blocks = {};
-        await Promise.all(Object.keys(worksheets).map(async(ws) => {
-            const worksheetBlocks = await this.resolveWorksheetBlocks(worksheets[ws].sheet, openers, closers)
-                .catch((err) => {
-                    if (err instanceof RenderError) throw err.setWorksheet(ws);
-                    else throw err;
-                });
+        await this.forEachWorksheet(async({ sheet }, ws) => {
+            const worksheetBlocks = await this.resolveWorksheetBlocks(
+                sheet,
+                openers,
+                closers,
+            ).catch((err) => {
+                if (err instanceof RenderError) throw err.setWorksheet(ws);
+                else throw err;
+            });
             blocks[ws] = worksheetBlocks;
-        }));
+        });
 
         // resolve block sizes
         await Promise.all(Object.keys(blocks).map(ws => {
@@ -356,37 +351,34 @@ class XLSX {
     // given previously resolved blocks, expand worksheet rows/columns as necessary
     async expandWorksheets(blocks) {
         // expand
-        const worksheets = this.worksheets;
         const dimensionChanges = {};
-        await Promise.all(Object.keys(worksheets).map(async(ws) => {
+        await this.forEachWorksheet(async({ sheet, path }, ws) => {
             dimensionChanges[ws] = {
                 colsAdded: {},
                 rowsAdded: 0,
             };
-            const expanding = worksheets[ws].sheet
+            const expanding = sheet
                 .pipe(expandCols(blocks[ws], dimensionChanges[ws]))
-                .pipe(expandRows(blocks[ws], dimensionChanges[ws],));
-            this.update(worksheets[ws].path, expanding);
+                .pipe(expandRows(blocks[ws], dimensionChanges[ws]));
+            this.update(path, expanding);
             await finish(expanding);
-        }));
+        });
         // update dimensions
-        const expanded = this.worksheets;
-        for (const ws in dimensionChanges) {
-            const updating = expanded[ws].sheet
+        this.forEachWorksheet(async({ sheet, path }, ws) => {
+            const updating = sheet
                 .pipe(updateDimensions(dimensionChanges[ws]))
                 .pipe(updateColumns(dimensionChanges[ws]));
-            this.update(expanded[ws].path, updating);
-        }
+            this.update(path, updating);
+        });
     }
 
     // figure out which scopes the sharedStrings in toParse need to be resolved against
     async resolveSharedStringScopes(toParse, blocks) {
         let totalSharedStringCount = 0;
 
-        const worksheets = this.worksheets;
-        await Promise.all(Object.keys(worksheets).map(async(ws) => {
+        await this.forEachWorksheet(async({ sheet, path }, ws) => {
             const worksheetBlocks = blocks[ws];
-            const stream = worksheets[ws].sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
+            const stream = sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
                 if (attributes['t'] !== 's') return cell;
 
                 totalSharedStringCount += 1;
@@ -421,9 +413,9 @@ class XLSX {
                 return cell;
             }, { contentsOnly: true }));
             // even though we're not actually updating the worksheet contents, need to do this otherwise its stream is already consumed
-            this.update(worksheets[ws].path, stream);
+            this.update(path, stream);
             await finish(stream);
-        }));
+        });
 
         return { totalSharedStringCount };
     }
@@ -472,9 +464,8 @@ class XLSX {
         // update worksheets cells to point to new sharedstring locations post-pruning
 
         let totalSharedStringCount = 0;
-        const worksheets = this.worksheets;
-        await Promise.all(Object.keys(worksheets).map(async(ws) => {
-            const updating = worksheets[ws].sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
+        await this.forEachWorksheet(async({ sheet, path }) => {
+            const updating = sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
                 if (attributes['t'] !== 's') return cell;
 
                 const sharedStringID = Number(getCellContents(cell));
@@ -498,9 +489,9 @@ class XLSX {
                 return remainingAttributes ? row
                     : '';
             }));
-            this.update(worksheets[ws].path, updating);
+            this.update(path, updating);
             await finish(updating);
-        }));
+        });
 
         const updatedCounts = this.sharedStrings.pipe(XMLTagReplacer('sst', (sst) => setXMLTagAttributes(sst, {
             count: totalSharedStringCount,
@@ -542,9 +533,8 @@ class XLSX {
             added[id] = created.length - 1;
             return added;
         }, []);
-        const worksheets = this.worksheets;
-        await Promise.all(Object.keys(worksheets).map(async(ws) => {
-            const updating = worksheets[ws].sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
+        await this.forEachWorksheet(async({ sheet, path }, ws) => {
+            const updating = sheet.pipe(XMLTagReplacer('c', (cell, { attributes }) => {
                 if (attributes['t'] !== 's') return cell;
 
                 const sharedStringID = Number(getCellContents(cell));
@@ -558,9 +548,9 @@ class XLSX {
                 sharedStringsUsed.add(newSharedStringID);
                 return setCellContents(cell, newSharedStringID.toString());
             }));
-            this.update(worksheets[ws].path, updating);
+            this.update(path, updating);
             await finish(updating);
-        }));
+        });
 
         // remove unused/duplicate/empty strings
 
